@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>4D N-Body Spatiotemporal Fractal Explorer</title>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <div class="banner" id="error-banner">
+        <span class="warning-icon">⚠</span>
+        <span id="error-message">WebGPU error detected.</span>
+    </div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header>
+            <div class="logo">
+                <div class="logo-icon"></div>
+                <h1 class="logo-text">4D N-Body Fractal</h1>
+            </div>
+            
+            <div class="global-controls">
+                <div class="btn-group-3" style="width: 320px;">
+                    <button class="btn btn-primary active" id="btn-mode-2d">2D Slice</button>
+                    <button class="btn btn-primary" id="btn-mode-3d">3D Volume</button>
+                    <button class="btn btn-primary" id="btn-animate">Play Morph</button>
+                </div>
+                <button class="btn" id="btn-screenshot">Capture</button>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <div class="workspace">
+            
+            <!-- Left Sidebar: Viewplane and Fractal parameters -->
+            <div class="sidebar">
+                
+                <!-- 4D Rotations and Slice settings -->
+                <div class="panel-section" id="section-slice">
+                    <div class="section-title">
+                        <span>4D Slice plane</span>
+                        <button class="btn" id="btn-reset-view" style="font-size: 0.7rem; padding: 4px 8px;">Reset</button>
+                    </div>
+                    
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Zoom</span>
+                            <span class="control-value" id="val-zoom">1.50</span>
+                        </div>
+                        <input type="range" id="slider-zoom" min="0.05" max="10.0" step="0.01" value="1.50">
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Render Resolution Scale</span>
+                            <span class="control-value" id="val-res-scale">1.00x</span>
+                        </div>
+                        <input type="range" id="slider-res-scale" min="0.10" max="2.00" step="0.05" value="1.00">
+                    </div>
+
+                    <div class="rotation-group">
+                        <div class="rotation-col">
+                            <span class="control-label">XY (Spatial)</span>
+                            <input type="range" id="slider-rot-xy" min="-3.14" max="3.14" step="0.01" value="0.00">
+                        </div>
+                        <div class="rotation-col">
+                            <span class="control-label">YZ (Spatial)</span>
+                            <input type="range" id="slider-rot-yz" min="-3.14" max="3.14" step="0.01" value="0.00">
+                        </div>
+                        <div class="rotation-col">
+                            <span class="control-label">XZ (Spatial)</span>
+                            <input type="range" id="slider-rot-xz" min="-3.14" max="3.14" step="0.01" value="0.00">
+                        </div>
+                        <div class="rotation-col">
+                            <span class="control-label">XW (Spatiotemporal)</span>
+                            <input type="range" id="slider-rot-xw" min="-3.14" max="3.14" step="0.01" value="0.00">
+                        </div>
+                        <div class="rotation-col">
+                            <span class="control-label">YW (Spatiotemporal)</span>
+                            <input type="range" id="slider-rot-yw" min="-3.14" max="3.14" step="0.01" value="0.00">
+                        </div>
+                        <div class="rotation-col">
+                            <span class="control-label">ZW (Spatiotemporal)</span>
+                            <input type="range" id="slider-rot-zw" min="-3.14" max="3.14" step="0.01" value="0.00">
+                        </div>
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>4D Origin X / Y</span>
+                            <span class="control-value" id="val-origin-xy">0.00, 0.00</span>
+                        </div>
+                        <div class="coord-grid">
+                            <input type="range" id="slider-origin-x" min="-3.0" max="3.0" step="0.01" value="0.00">
+                            <input type="range" id="slider-origin-y" min="-3.0" max="3.0" step="0.01" value="0.00">
+                        </div>
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>4D Origin Z / W</span>
+                            <span class="control-value" id="val-origin-zw">0.00, 0.00</span>
+                        </div>
+                        <div class="coord-grid">
+                            <input type="range" id="slider-origin-z" min="-3.0" max="3.0" step="0.01" value="0.00">
+                            <input type="range" id="slider-origin-w" min="-3.0" max="3.0" step="0.01" value="0.00">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Simulation Settings -->
+                <div class="panel-section">
+                    <div class="section-title">Fractal math settings</div>
+                    
+                    <div class="control-row">
+                        <span class="control-label">Evaluation Metric</span>
+                        <select id="select-metric-mode">
+                            <option value="1" selected>Total Kinetic Energy (Full Steps)</option>
+                            <option value="0">Accumulated KE (with Early Escape)</option>
+                            <option value="2">Escape Iterations (Mandelbrot style)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Iteration Steps</span>
+                            <span class="control-value" id="val-steps">5</span>
+                        </div>
+                        <input type="range" id="slider-steps" min="1" max="300" step="1" value="5">
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Time Step (dt)</span>
+                            <span class="control-value" id="val-dt">3.14</span>
+                        </div>
+                        <input type="range" id="slider-dt" min="0.05" max="6.28" step="0.01" value="3.14">
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Gravity Softening</span>
+                            <span class="control-value" id="val-soften">3.14</span>
+                        </div>
+                        <input type="range" id="slider-soften" min="0.01" max="10.0" step="0.01" value="3.14">
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Escape Radius²</span>
+                            <span class="control-value" id="val-escape">25.0</span>
+                        </div>
+                        <input type="range" id="slider-escape" min="1.0" max="200.0" step="0.5" value="25.0">
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Seed Attraction Density</span>
+                            <span class="control-value" id="val-density">1.0</span>
+                        </div>
+                        <input type="range" id="slider-density" min="0.1" max="5.0" step="0.05" value="1.0">
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Core Velocity (Vx / Vy)</span>
+                        </div>
+                        <div class="coord-grid">
+                            <input type="range" id="slider-vel-x" min="-2.0" max="2.0" step="0.01" value="0.00">
+                            <input type="range" id="slider-vel-y" min="-2.0" max="2.0" step="0.01" value="0.00">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Temporal Function -->
+                <div class="panel-section">
+                    <div class="section-title">Temporal Function f(x,y,z)</div>
+                    
+                    <div class="control-row">
+                        <select id="select-temp-mode">
+                            <option value="0">Plane Slice Coordinate (Linear)</option>
+                            <option value="1">Constant W Value</option>
+                            <option value="2">Radial: scale * |pos| + offset</option>
+                            <option value="3">Wave: scale * sin(f * |pos|) + offset</option>
+                            <option value="4">Gradient Direction: scale * (x+y-z) + offset</option>
+                            <option value="5">Hyperbolic Saddle: scale * (x² - y²) + offset</option>
+                        </select>
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Function Scale</span>
+                            <span class="control-value" id="val-temp-scale">1.00</span>
+                        </div>
+                        <input type="range" id="slider-temp-scale" min="-5.0" max="5.0" step="0.05" value="1.00">
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Function Offset</span>
+                            <span class="control-value" id="val-temp-offset">0.00</span>
+                        </div>
+                        <input type="range" id="slider-temp-offset" min="-3.0" max="3.0" step="0.05" value="0.00">
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-label">
+                            <span>Wave Frequency / Param</span>
+                            <span class="control-value" id="val-temp-param">3.14</span>
+                        </div>
+                        <input type="range" id="slider-temp-param" min="0.1" max="15.0" step="0.05" value="3.14">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Central Viewport -->
+            <div class="viewport-container">
+                <canvas id="webgpu-canvas"></canvas>
+                
+                <div class="overlay-info">
+                    <div>Status: <span class="performance-badge" id="status-badge">WebGPU OK</span></div>
+                    <div>FPS: <span id="val-fps">--</span></div>
+                    <div>Resolution: <span id="val-res">--</span></div>
+                </div>
+            </div>
+
+            <!-- Right Sidebar: 3D Seed Manipulator and presets -->
+            <div class="sidebar sidebar-right">
+                
+                <!-- 3D Seed manipulation viewport -->
+                <div class="panel-section">
+                    <div class="section-title">3D Seed manipulator</div>
+                    <div id="manipulator-container"></div>
+                </div>
+
+                <!-- Seed Polyhedron presets -->
+                <div class="panel-section">
+                    <div class="section-title">Seed geometry Presets</div>
+                    
+                    <div class="control-row">
+                        <select id="select-preset">
+                            <option value="simplex">Regular 4D Simplex (5 Seeds)</option>
+                            <option value="tetrahedron">3D Tetrahedron + Center (5 Seeds)</option>
+                            <option value="octahedron">3D Octahedron (6 Seeds)</option>
+                            <option value="cube">3D Cube (8 Seeds)</option>
+                            <option value="sphere">5-Cell Hypersphere Ring (5 Seeds)</option>
+                            <option value="random">Random Clusters</option>
+                        </select>
+                    </div>
+                    
+                    <div class="btn-group">
+                        <button class="btn" id="btn-add-seed">Add Seed</button>
+                        <button class="btn btn-danger" id="btn-del-seed">Remove Selected</button>
+                    </div>
+                </div>
+
+                <!-- Selected Seed Properties Editor -->
+                <div class="panel-section">
+                    <div class="section-title">Selected seed properties</div>
+                    
+                    <div class="seed-props">
+                        <div class="control-row">
+                            <label class="control-label">Seed Index: <span id="lbl-selected-seed">-</span></label>
+                        </div>
+                        
+                        <div class="control-row">
+                            <div class="control-label">
+                                <span>Position X / Y</span>
+                            </div>
+                            <div class="coord-grid">
+                                <input type="number" id="input-seed-x" step="0.01" value="0.00" disabled>
+                                <input type="number" id="input-seed-y" step="0.01" value="0.00" disabled>
+                            </div>
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-label">
+                                <span>Position Z / W (4D)</span>
+                            </div>
+                            <div class="coord-grid">
+                                <input type="number" id="input-seed-z" step="0.01" value="0.00" disabled>
+                                <input type="number" id="input-seed-w" step="0.01" value="0.00" disabled>
+                            </div>
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-label">
+                                <span>Seed Mass (Attractive Force)</span>
+                            </div>
+                            <input type="number" id="input-seed-mass" step="0.1" value="1.0" min="0.1" max="10.0" disabled>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Coloring & Relief rendering properties -->
+                <div class="panel-section">
+                    <div class="section-title">Visual Render styling</div>
+                    
+                    <div class="control-row">
+                        <span class="control-label">Coloring Mode</span>
+                        <select id="select-color-mode">
+                            <option value="0">Zebra High-Contrast Contours</option>
+                            <option value="1">Smooth Sine/Cosine Gradient</option>
+                            <option value="2">Normal-Mapped Relief Shading</option>
+                        </select>
+                    </div>
+
+                    <div class="control-row">
+                        <span class="control-label">Gradient Palette</span>
+                        <select id="select-palette">
+                            <option value="neon">Neon Cyberpunk</option>
+                            <option value="fire">Thermal Flare</option>
+                            <option value="ocean">Abyssal Ocean</option>
+                            <option value="emerald">Jade Temple</option>
+                            <option value="chrome">Liquid Chrome</option>
+                        </select>
+                        <div class="palette-preview" id="preview-swatch"></div>
+                    </div>
+
+                    <div class="control-row" id="row-gradient-scale">
+                        <div class="control-label">
+                            <span>Color Density / Scale</span>
+                            <span class="control-value" id="val-grad-scale">1.00</span>
+                        </div>
+                        <input type="range" id="slider-grad-scale" min="0.05" max="5.0" step="0.01" value="1.00">
+                    </div>
+
+                    <div class="control-row" id="row-gradient-phase">
+                        <div class="control-label">
+                            <span>Color Phase Shift</span>
+                            <span class="control-value" id="val-grad-phase">0.00</span>
+                        </div>
+                        <input type="range" id="slider-grad-phase" min="0.0" max="1.0" step="0.01" value="0.00">
+                    </div>
+
+                    <div class="control-row" id="row-zebra-freq">
+                        <div class="control-label">
+                            <span>Zebra Density</span>
+                            <span class="control-value" id="val-zebra-freq">5.0</span>
+                        </div>
+                        <input type="range" id="slider-zebra-freq" min="0.5" max="30.0" step="0.1" value="5.0">
+                    </div>
+
+                    <div class="control-row" id="row-zebra-sharp">
+                        <div class="control-label">
+                            <span>Zebra Sharpness</span>
+                            <span class="control-value" id="val-zebra-sharp">0.05</span>
+                        </div>
+                        <input type="range" id="slider-zebra-sharp" min="0.001" max="0.5" step="0.001" value="0.05">
+                    </div>
+
+                    <!-- Lighting / Normal-relief settings -->
+                    <div id="group-lighting" style="display: none; flex-direction: column; gap: 15px;">
+                        <div class="control-row">
+                            <div class="control-label">
+                                <span>Relief Bump Height</span>
+                                <span class="control-value" id="val-relief-scale">1.50</span>
+                            </div>
+                            <input type="range" id="slider-relief-scale" min="0.05" max="5.0" step="0.05" value="1.50">
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-label">
+                                <span>Specular Shine</span>
+                                <span class="control-value" id="val-specular">0.80</span>
+                            </div>
+                            <input type="range" id="slider-specular" min="0.0" max="2.0" step="0.05" value="0.80">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Load JavaScript -->
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
