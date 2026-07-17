@@ -35,12 +35,53 @@ const PRESETS = {
         { position: [-0.4, -0.4, 0.4, 0.0], mass: 1.0 },
         { position: [-0.4, -0.4, -0.4, 0.0], mass: 1.0 }
     ],
+    triangle: [
+        { position: [0.0, 0.6, 0.0, 0.0], mass: 1.0 },
+        { position: [-0.52, -0.3, 0.0, 0.0], mass: 1.0 },
+        { position: [0.52, -0.3, 0.0, 0.0], mass: 1.0 }
+    ],
     sphere: [
         { position: [0.6, 0.0, 0.0, 0.0], mass: 1.0 },
         { position: [0.1854, 0.0, 0.0, 0.5706], mass: 1.0 },
         { position: [-0.4854, 0.0, 0.0, 0.3527], mass: 1.0 },
         { position: [-0.4854, 0.0, 0.0, -0.3527], mass: 1.0 },
         { position: [0.1854, 0.0, 0.0, -0.5706], mass: 1.0 }
+    ],
+    icosahedron: [
+        { position: [0.0, 0.35, 0.566, 0.0], mass: 1.0 },
+        { position: [0.0, 0.35, -0.566, 0.0], mass: 1.0 },
+        { position: [0.0, -0.35, 0.566, 0.0], mass: 1.0 },
+        { position: [0.0, -0.35, -0.566, 0.0], mass: 1.0 },
+        { position: [0.35, 0.566, 0.0, 0.0], mass: 1.0 },
+        { position: [0.35, -0.566, 0.0, 0.0], mass: 1.0 },
+        { position: [-0.35, 0.566, 0.0, 0.0], mass: 1.0 },
+        { position: [-0.35, -0.566, 0.0, 0.0], mass: 1.0 },
+        { position: [0.566, 0.0, 0.35, 0.0], mass: 1.0 },
+        { position: [0.566, 0.0, -0.35, 0.0], mass: 1.0 },
+        { position: [-0.566, 0.0, 0.35, 0.0], mass: 1.0 },
+        { position: [-0.566, 0.0, -0.35, 0.0], mass: 1.0 }
+    ],
+    dodecahedron: [
+        { position: [0.35, 0.35, 0.35, 0.0], mass: 1.0 },
+        { position: [0.35, 0.35, -0.35, 0.0], mass: 1.0 },
+        { position: [0.35, -0.35, 0.35, 0.0], mass: 1.0 },
+        { position: [0.35, -0.35, -0.35, 0.0], mass: 1.0 },
+        { position: [-0.35, 0.35, 0.35, 0.0], mass: 1.0 },
+        { position: [-0.35, 0.35, -0.35, 0.0], mass: 1.0 },
+        { position: [-0.35, -0.35, 0.35, 0.0], mass: 1.0 },
+        { position: [-0.35, -0.35, -0.35, 0.0], mass: 1.0 },
+        { position: [0.0, 0.216, 0.566, 0.0], mass: 1.0 },
+        { position: [0.0, 0.216, -0.566, 0.0], mass: 1.0 },
+        { position: [0.0, -0.216, 0.566, 0.0], mass: 1.0 },
+        { position: [0.0, -0.216, -0.566, 0.0], mass: 1.0 },
+        { position: [0.216, 0.566, 0.0, 0.0], mass: 1.0 },
+        { position: [0.216, -0.566, 0.0, 0.0], mass: 1.0 },
+        { position: [-0.216, 0.566, 0.0, 0.0], mass: 1.0 },
+        { position: [-0.216, -0.566, 0.0, 0.0], mass: 1.0 },
+        { position: [0.566, 0.0, 0.216, 0.0], mass: 1.0 },
+        { position: [0.566, 0.0, -0.216, 0.0], mass: 1.0 },
+        { position: [-0.566, 0.0, 0.216, 0.0], mass: 1.0 },
+        { position: [-0.566, 0.0, -0.216, 0.0], mass: 1.0 }
     ],
     random: [] // generated programmatically
 };
@@ -75,6 +116,36 @@ const PALETTES = {
         b: [0.5, 0.5, 0.5],
         c: [1.0, 1.0, 1.0],
         d: [0.0, 0.1, 0.2]
+    },
+    sunset: {
+        a: [0.5, 0.5, 0.5],
+        b: [0.5, 0.5, 0.5],
+        c: [1.0, 1.0, 1.0],
+        d: [0.3, 0.2, 0.2]
+    },
+    aurora: {
+        a: [0.2, 0.5, 0.4],
+        b: [0.5, 0.2, 0.5],
+        c: [2.0, 1.0, 1.0],
+        d: [0.0, 0.2, 0.4]
+    },
+    gold: {
+        a: [0.8, 0.7, 0.4],
+        b: [0.2, 0.2, 0.2],
+        c: [2.0, 1.0, 1.0],
+        d: [0.0, 0.1, 0.25]
+    },
+    cosmic: {
+        a: [0.5, 0.5, 0.5],
+        b: [0.5, 0.5, 0.5],
+        c: [1.0, 0.7, 0.4],
+        d: [0.0, 0.15, 0.2]
+    },
+    crimson: {
+        a: [0.55, 0.05, 0.05],
+        b: [0.45, 0.05, 0.05],
+        c: [1.0, 0.5, 0.2],
+        d: [0.0, 0.15, 0.3]
     }
 };
 
@@ -83,6 +154,10 @@ const state = {
     // Canvas Pan & Zoom (2D Slice Mode)
     zoom: 1.5,
     resolutionScale: 1.0,
+    warpFactor: 0.0,
+    warpType: 0,
+    energyThreshold: 0.0,
+    scaleStepsWithZoom: true,
     originX: 0.0,
     originY: 0.0,
     originZ: 0.0,
@@ -129,7 +204,7 @@ const state = {
 
     // Graphics render parameters
     viewMode: 0, // 0 = 2D, 1 = 3D
-    colorMode: 0, // 0 = Zebra, 1 = Gradient, 2 = Relief
+    colorMode: 1, // 0 = Zebra, 1 = Gradient, 2 = Relief
     paletteName: 'neon',
     gradientScale: 1.0,
     gradientPhase: 0.0,
@@ -273,9 +348,14 @@ function triggerRender() {
     // Map velocity parameters to 4D
     state.coreVelocity = [state.coreVelX, state.coreVelY, 0.0, 0.0];
 
+    // Compute dynamic steps based on zoom if scaling is enabled (zooming in increases iterations)
+    const renderSteps = state.scaleStepsWithZoom
+        ? Math.max(state.steps, Math.min(300, Math.round(state.steps + 30.0 * Math.max(0.0, -Math.log10(state.zoom)))))
+        : state.steps;
+
     // Compute uniforms parameters
     const computeUniforms = {
-        steps: state.steps,
+        steps: renderSteps,
         escapeR2: state.escapeR2,
         density: state.density,
         soften: state.soften,
@@ -293,6 +373,9 @@ function triggerRender() {
         boxSize: state.boxSize,
         zoom: state.zoom,
         metricMode: state.metricMode,
+        warpFactor: state.warpFactor,
+        warpType: state.warpType,
+        energyThreshold: state.energyThreshold,
         cameraPos: state.cameraPos,
         cameraDir: state.cameraDir,
         cameraUp: state.cameraUp,
@@ -558,9 +641,16 @@ function initCanvasMouseEvents(canvas) {
         e.preventDefault();
         
         const factor = e.deltaY > 0 ? 1.08 : 0.92;
-        state.zoom = Math.max(0.01, Math.min(20.0, state.zoom * factor));
-        document.getElementById('slider-zoom').value = state.zoom.toFixed(2);
-        document.getElementById('val-zoom').textContent = state.zoom.toFixed(2);
+        state.zoom = Math.max(0.0001, Math.min(100.0, state.zoom * factor));
+        
+        // Update logarithmic slider position
+        const sliderZoom = document.getElementById('slider-zoom');
+        if (sliderZoom) sliderZoom.value = Math.log10(state.zoom).toFixed(2);
+        
+        const valZoom = document.getElementById('val-zoom');
+        if (valZoom) {
+            valZoom.textContent = state.zoom < 0.01 ? state.zoom.toExponential(2) : state.zoom.toFixed(2);
+        }
 
         updateCameraVectors();
         triggerRender();
@@ -578,7 +668,12 @@ function bindUIEventListeners() {
             const val = parseFloat(e.target.value);
             state[stateKey] = transform(val);
             if (label) {
-                label.textContent = state[stateKey].toFixed(2);
+                const displayVal = state[stateKey];
+                if (displayVal < 0.01) {
+                    label.textContent = displayVal.toExponential(2);
+                } else {
+                    label.textContent = displayVal.toFixed(2);
+                }
             }
             if (isRenderOnly) {
                 triggerColorUpdate();
@@ -589,7 +684,8 @@ function bindUIEventListeners() {
     };
 
     // Left Sidebar sliders
-    bindSlider('slider-zoom', 'zoom', 'val-zoom');
+    bindSlider('slider-zoom', 'zoom', 'val-zoom', (val) => Math.pow(10, val));
+    bindSlider('slider-warp', 'warpFactor', 'val-warp');
 
     const resScaleSlider = document.getElementById('slider-res-scale');
     if (resScaleSlider) {
@@ -651,9 +747,39 @@ function bindUIEventListeners() {
         }
     };
     bindIntSlider('slider-steps', 'steps', 'val-steps');
+
+    const checkScaleSteps = document.getElementById('check-scale-steps');
+    if (checkScaleSteps) {
+        checkScaleSteps.addEventListener('change', (e) => {
+            state.scaleStepsWithZoom = e.target.checked;
+            triggerRender();
+        });
+    }
     bindSlider('slider-dt', 'dt', 'val-dt');
     bindSlider('slider-soften', 'soften', 'val-soften');
-    bindSlider('slider-escape', 'escapeR2', 'val-escape');
+    const escapeSlider = document.getElementById('slider-escape');
+    const escapeLabel = document.getElementById('val-escape');
+    if (escapeSlider) {
+        escapeSlider.addEventListener('input', (e) => {
+            state.escapeR2 = parseFloat(e.target.value);
+            if (escapeLabel) {
+                escapeLabel.textContent = state.escapeR2 === 0 ? "Disabled" : state.escapeR2.toFixed(0);
+            }
+            triggerRender();
+        });
+    }
+
+    const energySlider = document.getElementById('slider-energy-threshold');
+    const energyLabel = document.getElementById('val-energy-threshold');
+    if (energySlider) {
+        energySlider.addEventListener('input', (e) => {
+            state.energyThreshold = parseFloat(e.target.value);
+            if (energyLabel) {
+                energyLabel.textContent = state.energyThreshold === 0.0 ? "Disabled" : state.energyThreshold.toFixed(0);
+            }
+            triggerRender();
+        });
+    }
     bindSlider('slider-density', 'density', 'val-density');
     
     // Core Velocity
@@ -675,6 +801,15 @@ function bindUIEventListeners() {
     if (tempModeSelect) {
         tempModeSelect.addEventListener('change', (e) => {
             state.temporalMode = parseInt(e.target.value);
+            triggerRender();
+        });
+    }
+
+    // Warp Type settings
+    const warpTypeSelect = document.getElementById('select-warp-type');
+    if (warpTypeSelect) {
+        warpTypeSelect.addEventListener('change', (e) => {
+            state.warpType = parseInt(e.target.value);
             triggerRender();
         });
     }

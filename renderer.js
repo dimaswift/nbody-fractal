@@ -26,13 +26,16 @@ export class WebGPURenderer {
         this.renderBindGroupLayout = null;
         
         // Array buffers for CPU updates
-        this.uniformsData = new ArrayBuffer(192);
+        this.uniformsData = new ArrayBuffer(208);
         this.renderUniformsData = new ArrayBuffer(128);
         this.seedsData = new ArrayBuffer(1024);
         
         this.width = canvas.width;
         this.height = canvas.height;
         this.isInitialized = false;
+
+        this.rawShaderSource = "";
+        this.currentBodyCount = 0;
     }
 
     async init() {
@@ -56,14 +59,11 @@ export class WebGPURenderer {
         });
 
         // Load shader WGSL
-        const shaderSource = await (await fetch("./shader.wgsl")).text();
-        const shaderModule = this.device.createShaderModule({
-            code: shaderSource
-        });
+        this.rawShaderSource = await (await fetch("./shader.wgsl")).text();
 
         // Create GPU Buffers
         this.uniformBuffer = this.device.createBuffer({
-            size: 192,
+            size: 208,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
@@ -80,7 +80,7 @@ export class WebGPURenderer {
         // Create Output Texture for Compute -> Render mapping
         this.recreateTexture();
 
-        // --- COMPUTE BINDING LAYOUT & PIPELINE ---
+        // --- COMPUTE BINDING LAYOUT ---
         this.computeBindGroupLayout = this.device.createBindGroupLayout({
             entries: [
                 {
@@ -105,17 +105,7 @@ export class WebGPURenderer {
             ]
         });
 
-        this.computePipeline = this.device.createComputePipeline({
-            layout: this.device.createPipelineLayout({
-                bindGroupLayouts: [this.computeBindGroupLayout]
-            }),
-            compute: {
-                module: shaderModule,
-                entryPoint: "compute_main"
-            }
-        });
-
-        // --- RENDER BINDING LAYOUT & PIPELINE ---
+        // --- RENDER BINDING LAYOUT ---
         this.renderBindGroupLayout = this.device.createBindGroupLayout({
             entries: [
                 {
@@ -134,6 +124,36 @@ export class WebGPURenderer {
             ]
         });
 
+        this.currentBodyCount = 0;
+        this.rebuildComputePipeline(32); // Compile fallback default
+
+        this.isInitialized = true;
+    }
+
+    rebuildComputePipeline(bodyCount) {
+        if (bodyCount === this.currentBodyCount) return;
+        this.currentBodyCount = bodyCount;
+
+        const processedSource = this.rawShaderSource.replace(
+            /const BODY_COUNT = \d+u;/g,
+            `const BODY_COUNT = ${bodyCount}u;`
+        );
+
+        const shaderModule = this.device.createShaderModule({
+            code: processedSource
+        });
+
+        this.computePipeline = this.device.createComputePipeline({
+            layout: this.device.createPipelineLayout({
+                bindGroupLayouts: [this.computeBindGroupLayout]
+            }),
+            compute: {
+                module: shaderModule,
+                entryPoint: "compute_main"
+            }
+        });
+
+        const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
         this.renderPipeline = this.device.createRenderPipeline({
             layout: this.device.createPipelineLayout({
                 bindGroupLayouts: [this.renderBindGroupLayout]
@@ -145,9 +165,7 @@ export class WebGPURenderer {
             fragment: {
                 module: shaderModule,
                 entryPoint: "fragment_main",
-                targets: [{
-                    format: canvasFormat
-                }]
+                targets: [{ format: canvasFormat }]
             },
             primitive: {
                 topology: "triangle-list"
@@ -156,8 +174,6 @@ export class WebGPURenderer {
 
         this.updateComputeBindGroup();
         this.updateRenderBindGroup();
-        
-        this.isInitialized = true;
     }
 
     recreateTexture() {
@@ -238,11 +254,17 @@ export class WebGPURenderer {
         f32[30] = data.zoom;
         u32[31] = data.metricMode;
 
-        // Camera parameters (pad to vec4)
-        f32.set([...data.cameraPos, 0], 32);
-        f32.set([...data.cameraDir, 0], 36);
-        f32.set([...data.cameraUp, 0], 40);
-        f32.set([...data.cameraRight, 0], 44);
+        // Radial warp factor, type, and energy threshold
+        f32[32] = data.warpFactor;
+        u32[33] = data.warpType;
+        f32[34] = data.energyThreshold;
+        f32[35] = 0.0;
+
+        // Camera parameters (pad to vec4, shifted by 4 floats)
+        f32.set([...data.cameraPos, 0], 36);
+        f32.set([...data.cameraDir, 0], 40);
+        f32.set([...data.cameraUp, 0], 44);
+        f32.set([...data.cameraRight, 0], 48);
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformsData);
     }
@@ -276,6 +298,9 @@ export class WebGPURenderer {
 
     // Update seed data storage buffer
     writeSeeds(seeds) {
+        const count = Math.max(1, seeds.length);
+        this.rebuildComputePipeline(count);
+
         const f32 = new Float32Array(this.seedsData);
         f32.fill(0); // clear
 

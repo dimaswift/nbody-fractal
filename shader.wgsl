@@ -1,5 +1,7 @@
 // WebGPU Shaders for 4D N-Body Fractal Explorer
 
+const BODY_COUNT = 32u;
+
 struct Uniforms {
     resolution: vec2f,
     steps: i32,
@@ -24,6 +26,11 @@ struct Uniforms {
     box_size: f32,
     zoom: f32,
     metric_mode: u32,
+
+    warp_factor: f32,
+    warp_type: u32,
+    energy_threshold: f32,
+    pad4: f32,
 
     camera_pos: vec4f,
     camera_dir: vec4f,
@@ -73,16 +80,15 @@ struct RenderUniforms {
 
 // --- PHYSICS UTILITIES ---
 
-fn computeAccelerations(b: ptr<function, array<Body, 32>>) -> array<vec4f, 32> {
-    var a: array<vec4f, 32>;
-    let count = uniforms.body_count;
+fn computeAccelerations(b: ptr<function, array<Body, BODY_COUNT>>) -> array<vec4f, BODY_COUNT> {
+    var a: array<vec4f, BODY_COUNT>;
     
-    for (var i = 0u; i < count; i = i + 1u) {
+    for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
         a[i] = vec4f(0.0);
     }
     
-    for (var i = 0u; i < count; i = i + 1u) {
-        for (var j = 0u; j < count; j = j + 1u) {
+    for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
+        for (var j = 0u; j < BODY_COUNT; j = j + 1u) {
             if (i == j) { continue; }
             let r = (*b)[j].position - (*b)[i].position;
             let r2 = dot(r, r) + uniforms.soften;
@@ -94,12 +100,30 @@ fn computeAccelerations(b: ptr<function, array<Body, 32>>) -> array<vec4f, 32> {
     return a;
 }
 
-fn EvaluateFractal(position: vec4f) -> f32 {
-    var b: array<Body, 32>;
-    let count = uniforms.body_count;
+fn EvaluateFractal(initial_pos: vec4f) -> f32 {
+    var position = initial_pos;
+    
+    // Global non-linear space warp centered at (0,0,0) in 3D
+    let r = length(position.xyz);
+    if (r > 0.0 && uniforms.warp_factor > 0.0) {
+        var r_new = r;
+        if (uniforms.warp_type == 0u) {
+            // Logarithmic (Smooth Log)
+            r_new = log(1.0 + uniforms.warp_factor * r) / uniforms.warp_factor;
+        } else if (uniforms.warp_type == 1u) {
+            // Hyperbolic (Arcsinh)
+            r_new = asinh(uniforms.warp_factor * r) / uniforms.warp_factor;
+        } else if (uniforms.warp_type == 2u) {
+            // Poincaré (Tanh Disk)
+            r_new = tanh(uniforms.warp_factor * r) / uniforms.warp_factor;
+        }
+        position = vec4f((position.xyz / r) * r_new, position.w);
+    }
+
+    var b: array<Body, BODY_COUNT>;
     
     // Initialize bodies from seeds
-    for (var i = 0u; i < count; i = i + 1u) {
+    for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
         let seed = seeds[i];
         let d = length(position - seed.position);
         let val = uniforms.density / exp(d);
@@ -108,7 +132,7 @@ fn EvaluateFractal(position: vec4f) -> f32 {
         b[i].mass = seed.mass;
     }
     
-    if (count > 0u) {
+    if (BODY_COUNT > 0u) {
         b[0].velocity = uniforms.coreVelocity;
     }
     
@@ -124,7 +148,7 @@ fn EvaluateFractal(position: vec4f) -> f32 {
     for (var s = 0; s <= uniforms.steps; s = s + 1) {
         if (alive || uniforms.metric_mode == 1u) {
             // Update positions (Verlet step 1)
-            for (var i = 0u; i < count; i = i + 1u) {
+            for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
                 b[i].position = b[i].position + b[i].velocity * dt + 0.5 * a0[i] * dt2;
             }
             
@@ -132,7 +156,7 @@ fn EvaluateFractal(position: vec4f) -> f32 {
             let a1 = computeAccelerations(&b);
             
             // Update velocities (Verlet step 2)
-            for (var i = 0u; i < count; i = i + 1u) {
+            for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
                 b[i].velocity = b[i].velocity + 0.5 * (a0[i] + a1[i]) * dt;
                 a0[i] = a1[i];
             }
@@ -140,19 +164,34 @@ fn EvaluateFractal(position: vec4f) -> f32 {
             // Accumulate kinetic energy & check escape
             var maxR2 = 0.0;
             var step_ke = 0.0;
-            for (var i = 0u; i < count; i = i + 1u) {
+            for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
                 step_ke = step_ke + dot(b[i].velocity, b[i].velocity);
                 maxR2 = max(maxR2, dot(b[i].position, b[i].position));
             }
             
             accum = accum + step_ke;
             
-            if (maxR2 > uniforms.escapeR2) {
+            // Adaptive Energy Threshold early escape
+            if (uniforms.energy_threshold > 0.0 && accum >= uniforms.energy_threshold) {
                 if (alive) {
                     escape_step = s;
                     alive = false;
                 }
+                break; // Break unconditionally if energy threshold is reached
             }
+            
+            // Orbital Escape Radius check
+            if (uniforms.escapeR2 > 0.0 && maxR2 > uniforms.escapeR2) {
+                if (alive) {
+                    escape_step = s;
+                    alive = false;
+                }
+                if (uniforms.metric_mode != 1u) {
+                    break; // Break immediately if we are not in Total KE (Full Steps) mode
+                }
+            }
+        } else {
+            break;
         }
     }
     
