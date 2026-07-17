@@ -1,5 +1,6 @@
 import { WebGPURenderer } from './renderer.js';
 import { SeedManipulator } from './manipulator.js';
+import { triTable } from './tri_table.js';
 
 // Default presets definitions
 const PRESETS = {
@@ -157,7 +158,20 @@ const state = {
     warpFactor: 0.0,
     warpType: 0,
     energyThreshold: 0.0,
-    scaleStepsWithZoom: true,
+    scaleStepsWithZoom: false,
+    raySteps: 80.0,
+    isFlyMode: false,
+    renderMode3D: 1,
+    isovalue: 2.05,
+    mcBudget: 500000,
+    mcResX: 252,
+    mcResY: 252,
+    mcResZ: 252,
+    mcInvertNormals: false,
+    samplingZoom: 0.75,
+    clipShape: 1,
+    clipSize: 1.40,
+    clipFalloff: 0.44,
     originX: 0.0,
     originY: 0.0,
     originZ: 0.0,
@@ -182,28 +196,28 @@ const state = {
     boxSize: 1.8,
 
     // Simulation params
-    steps: 5,
+    steps: 1,
     dt: 3.14,
-    soften: 3.14,
+    soften: 2.09,
     escapeR2: 25.0,
-    density: 1.0,
-    coreVelX: 0.0,
-    coreVelY: 0.0,
+    density: 1.70,
+    coreVelX: -0.30,
+    coreVelY: 0.60,
     coreVelocity: [0, 0, 0, 0],
     metricMode: 1, // Default: Total KE
 
     // Temporal function settings
-    temporalMode: 0,
-    temporalScale: 1.0,
-    temporalOffset: 0.0,
-    temporalParam: 3.14,
+    temporalMode: 3,
+    temporalScale: -0.35,
+    temporalOffset: 0.05,
+    temporalParam: 1.55,
 
     // Seeds
     seeds: [],
     selectedSeedIndex: -1,
 
     // Graphics render parameters
-    viewMode: 0, // 0 = 2D, 1 = 3D
+    viewMode: 1, // 0 = 2D, 1 = 3D
     colorMode: 1, // 0 = Zebra, 1 = Gradient, 2 = Relief
     paletteName: 'neon',
     gradientScale: 1.0,
@@ -298,8 +312,45 @@ function getSlicePlaneVectors() {
     return { sliceU, sliceV };
 }
 
-// Update camera vectors for 3D Volume Raymarching look-at mapping (Isometric / Slice Aligned)
+// Update camera vectors for 3D Volume Raymarching look-at mapping (Isometric / Slice Aligned / Fly Mode)
 function updateCameraVectors() {
+    if (state.viewMode === 1 && state.isFlyMode) {
+        // Fly mode: compute directions from free-look angles (camTheta, camPhi)
+        const theta = state.camTheta;
+        const phi = state.camPhi;
+        
+        const dir = [
+            Math.sin(theta) * Math.cos(phi),
+            Math.sin(phi),
+            Math.cos(theta) * Math.cos(phi)
+        ];
+        state.cameraDir = dir;
+        
+        const right = [
+            Math.cos(theta),
+            0.0,
+            -Math.sin(theta)
+        ];
+        state.cameraRight = right;
+        
+        state.cameraUp = [
+            -Math.sin(theta) * Math.sin(phi),
+            Math.cos(phi),
+            -Math.cos(theta) * Math.sin(phi)
+        ];
+        // cameraPos is NOT modified here; it is updated by key actions in the main loop
+        return;
+    }
+
+    if (state.viewMode === 1) {
+        // Stationary camera for 3D Mode (mouse rotates model/subject instead of camera)
+        state.cameraDir = [0.0, 0.0, -1.0];
+        state.cameraRight = [1.0, 0.0, 0.0];
+        state.cameraUp = [0.0, 1.0, 0.0];
+        state.cameraPos = [state.originX, state.originY, state.originZ + state.camRadius];
+        return;
+    }
+
     const { sliceU, sliceV } = getSlicePlaneVectors();
 
     // 3D projections of the 4D slice plane basis vectors
@@ -340,8 +391,11 @@ function updateCameraVectors() {
 }
 
 // Re-render fractal (Runs WebGPU compute shader + draw pass)
-function triggerRender() {
+function triggerRender(forceMcRecompute = true) {
     if (!renderer || !renderer.isInitialized) return;
+    if (forceMcRecompute) {
+        renderer.mcNeedsRecompute = true;
+    }
 
     const { sliceU, sliceV } = getSlicePlaneVectors();
 
@@ -352,6 +406,8 @@ function triggerRender() {
     const renderSteps = state.scaleStepsWithZoom
         ? Math.max(state.steps, Math.min(300, Math.round(state.steps + 30.0 * Math.max(0.0, -Math.log10(state.zoom)))))
         : state.steps;
+
+    const finalRaySteps = state.isFlyMode ? -state.raySteps : state.raySteps;
 
     // Compute uniforms parameters
     const computeUniforms = {
@@ -376,10 +432,23 @@ function triggerRender() {
         warpFactor: state.warpFactor,
         warpType: state.warpType,
         energyThreshold: state.energyThreshold,
+        raySteps: finalRaySteps,
         cameraPos: state.cameraPos,
         cameraDir: state.cameraDir,
         cameraUp: state.cameraUp,
         cameraRight: state.cameraRight,
+        isovalue: state.isovalue,
+        gridSizeX: state.mcResX,
+        gridSizeY: state.mcResY,
+        gridSizeZ: state.mcResZ,
+        maxVertices: state.mcBudget * 3,
+        invertNormals: state.mcInvertNormals,
+        samplingZoom: state.samplingZoom,
+        clipShape: state.clipShape,
+        clipSize: state.clipSize,
+        clipFalloff: state.clipFalloff,
+        modelRotX: state.rotXY,
+        modelRotY: state.rotYZ,
     };
 
     // Fragment shader uniforms
@@ -408,7 +477,15 @@ function triggerRender() {
     renderer.writeRenderUniforms(renderUniforms);
 
     // Run GPU passes
-    renderer.render();
+    renderer.render(
+        state.viewMode === 1 && state.renderMode3D === 1,
+        {
+            gridX: state.mcResX,
+            gridY: state.mcResY,
+            gridZ: state.mcResZ,
+            budget: state.mcBudget
+        }
+    );
 }
 
 // Redraw only the color mapping (only runs fragment shader, very fast!)
@@ -435,7 +512,7 @@ function triggerColorUpdate() {
     };
 
     renderer.writeRenderUniforms(renderUniforms);
-    renderer.draw();
+    renderer.draw(state.viewMode === 1 && state.renderMode3D === 1);
 }
 
 // Generate dynamic color preview bar on UI
@@ -609,23 +686,32 @@ function initCanvasMouseEvents(canvas) {
             document.getElementById('val-origin-zw').textContent = `${state.originZ.toFixed(2)}, ${state.originW.toFixed(2)}`;
 
             updateCameraVectors(); // shifts camera pos since origin moved
-            triggerRender();
+            triggerRender(false);
         } else {
-            // --- 3D Volumetric Mode: Rotate Slice Plane Spatially ---
-            state.rotXY += dx * 0.005;
-            state.rotYZ += dy * 0.005;
+            if (state.viewMode === 1 && state.isFlyMode) {
+                // Fly mode: free-look camera rotation (pitch & yaw)
+                state.camTheta += dx * 0.003;
+                state.camPhi = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, state.camPhi + dy * 0.003));
+                
+                updateCameraVectors();
+                triggerRender(false);
+            } else {
+                // --- 3D Volumetric Mode: Rotate Slice Plane Spatially ---
+                state.rotXY += dx * 0.005;
+                state.rotYZ += dy * 0.005;
 
-            if (state.rotXY > Math.PI) state.rotXY -= 2 * Math.PI;
-            if (state.rotXY < -Math.PI) state.rotXY += 2 * Math.PI;
-            if (state.rotYZ > Math.PI) state.rotYZ -= 2 * Math.PI;
-            if (state.rotYZ < -Math.PI) state.rotYZ += 2 * Math.PI;
+                if (state.rotXY > Math.PI) state.rotXY -= 2 * Math.PI;
+                if (state.rotXY < -Math.PI) state.rotXY += 2 * Math.PI;
+                if (state.rotYZ > Math.PI) state.rotYZ -= 2 * Math.PI;
+                if (state.rotYZ < -Math.PI) state.rotYZ += 2 * Math.PI;
 
-            // Update UI sliders for visual feedback
-            document.getElementById('slider-rot-xy').value = state.rotXY.toFixed(2);
-            document.getElementById('slider-rot-yz').value = state.rotYZ.toFixed(2);
-            
-            updateCameraVectors(); // camera revolves to stay locked facing slice
-            triggerRender();
+                // Update UI sliders for visual feedback
+                document.getElementById('slider-rot-xy').value = state.rotXY.toFixed(2);
+                document.getElementById('slider-rot-yz').value = state.rotYZ.toFixed(2);
+                
+                updateCameraVectors(); // camera revolves to stay locked facing slice
+                triggerRender(false);
+            }
         }
     });
 
@@ -643,7 +729,7 @@ function initCanvasMouseEvents(canvas) {
         const factor = e.deltaY > 0 ? 1.08 : 0.92;
         state.zoom = Math.max(0.0001, Math.min(100.0, state.zoom * factor));
         
-        // Update logarithmic slider position
+        // Update logarithmic slider position (2D Zoom slider only)
         const sliderZoom = document.getElementById('slider-zoom');
         if (sliderZoom) sliderZoom.value = Math.log10(state.zoom).toFixed(2);
         
@@ -653,8 +739,25 @@ function initCanvasMouseEvents(canvas) {
         }
 
         updateCameraVectors();
-        triggerRender();
+        triggerRender(false);
     }, { passive: false });
+}
+
+function update3DPanelVisibility() {
+    const isMC = state.renderMode3D === 1;
+    const dispMC = isMC ? 'flex' : 'none';
+    const dispVol = !isMC ? 'flex' : 'none';
+
+    const rows = ['row-isovalue', 'row-mc-budget', 'row-mc-res-x', 'row-mc-res-y', 'row-mc-res-z', 'row-mc-invert-normals', 'row-mc-presets'];
+    rows.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = dispMC;
+    });
+
+    const rayStepsRow = document.getElementById('row-ray-steps');
+    if (rayStepsRow) {
+        rayStepsRow.style.display = dispVol;
+    }
 }
 
 // Set up UI sliders listeners
@@ -781,6 +884,172 @@ function bindUIEventListeners() {
         });
     }
     bindSlider('slider-density', 'density', 'val-density');
+
+    // 3D Raymarching settings
+    const checkFlyMode = document.getElementById('check-fly-mode');
+    if (checkFlyMode) {
+        checkFlyMode.addEventListener('change', (e) => {
+            state.isFlyMode = e.target.checked;
+            if (state.isFlyMode) {
+                // Initialize free-look angles from current locked camera direction
+                const d = state.cameraDir;
+                state.camPhi = Math.asin(Math.max(-1.0, Math.min(1.0, d[1])));
+                state.camTheta = Math.atan2(d[0], d[2]);
+            }
+            updateCameraVectors();
+            triggerRender();
+        });
+    }
+
+    const sliderRaySteps = document.getElementById('slider-ray-steps');
+    const labelRaySteps = document.getElementById('val-ray-steps');
+    if (sliderRaySteps) {
+        sliderRaySteps.addEventListener('input', (e) => {
+            state.raySteps = parseFloat(e.target.value);
+            if (labelRaySteps) {
+                labelRaySteps.textContent = state.raySteps.toFixed(0);
+            }
+            triggerRender();
+        });
+    }
+
+    const select3DType = document.getElementById('select-3d-render-type');
+    if (select3DType) {
+        select3DType.addEventListener('change', (e) => {
+            state.renderMode3D = parseInt(e.target.value);
+            update3DPanelVisibility();
+            triggerRender();
+        });
+    }
+
+    const sliderIsovalue = document.getElementById('slider-isovalue');
+    const labelIsovalue = document.getElementById('val-isovalue');
+    if (sliderIsovalue) {
+        sliderIsovalue.addEventListener('input', (e) => {
+            state.isovalue = parseFloat(e.target.value);
+            if (labelIsovalue) {
+                labelIsovalue.textContent = state.isovalue.toFixed(2);
+            }
+            triggerRender();
+        });
+    }
+
+    // Marching Cubes Budget & Resolution sliders
+    const sliderMcBudget = document.getElementById('slider-mc-budget');
+    const labelMcBudget = document.getElementById('val-mc-budget');
+    if (sliderMcBudget) {
+        sliderMcBudget.addEventListener('input', (e) => {
+            state.mcBudget = parseInt(e.target.value);
+            if (labelMcBudget) {
+                labelMcBudget.textContent = state.mcBudget.toLocaleString();
+            }
+            triggerRender();
+        });
+    }
+
+    const bindResSlider = (id, stateKey, labelId) => {
+        const slider = document.getElementById(id);
+        const label = document.getElementById(labelId);
+        if (slider) {
+            slider.addEventListener('input', (e) => {
+                state[stateKey] = parseInt(e.target.value);
+                if (label) {
+                    label.textContent = state[stateKey];
+                }
+                triggerRender();
+            });
+        }
+    };
+    bindResSlider('slider-mc-res-x', 'mcResX', 'val-mc-res-x');
+    bindResSlider('slider-mc-res-y', 'mcResY', 'val-mc-res-y');
+    bindResSlider('slider-mc-res-z', 'mcResZ', 'val-mc-res-z');
+
+    const checkMcInvertNormals = document.getElementById('check-mc-invert-normals');
+    if (checkMcInvertNormals) {
+        checkMcInvertNormals.addEventListener('change', (e) => {
+            state.mcInvertNormals = e.target.checked;
+            triggerRender();
+        });
+    }
+
+    // Quick Resolution Preset buttons
+    const btnMcPreview = document.getElementById('btn-mc-preview');
+    if (btnMcPreview) {
+        btnMcPreview.addEventListener('click', () => {
+            state.mcResX = 64;
+            state.mcResY = 64;
+            state.mcResZ = 64;
+            document.getElementById('slider-mc-res-x').value = 64;
+            document.getElementById('slider-mc-res-y').value = 64;
+            document.getElementById('slider-mc-res-z').value = 64;
+            document.getElementById('val-mc-res-x').textContent = 64;
+            document.getElementById('val-mc-res-y').textContent = 64;
+            document.getElementById('val-mc-res-z').textContent = 64;
+            triggerRender();
+        });
+    }
+
+    const btnMcFinal = document.getElementById('btn-mc-final');
+    if (btnMcFinal) {
+        btnMcFinal.addEventListener('click', () => {
+            state.mcResX = 512;
+            state.mcResY = 512;
+            state.mcResZ = 512;
+            document.getElementById('slider-mc-res-x').value = 512;
+            document.getElementById('slider-mc-res-y').value = 512;
+            document.getElementById('slider-mc-res-z').value = 512;
+            document.getElementById('val-mc-res-x').textContent = 512;
+            document.getElementById('val-mc-res-y').textContent = 512;
+            document.getElementById('val-mc-res-z').textContent = 512;
+            triggerRender();
+        });
+    }
+
+    // Sampling Zoom (Fractal)
+    const slider3DZoom = document.getElementById('slider-3d-zoom');
+    const label3DZoom = document.getElementById('val-3d-zoom');
+    if (slider3DZoom) {
+        slider3DZoom.addEventListener('input', (e) => {
+            state.samplingZoom = parseFloat(e.target.value);
+            if (label3DZoom) {
+                label3DZoom.textContent = state.samplingZoom.toFixed(2);
+            }
+            triggerRender();
+        });
+    }
+
+    // Clipping Pass Controls
+    const selectMcClipShape = document.getElementById('select-mc-clip-shape');
+    if (selectMcClipShape) {
+        selectMcClipShape.addEventListener('change', (e) => {
+            state.clipShape = parseInt(e.target.value);
+            triggerRender();
+        });
+    }
+
+    const sliderMcClipSize = document.getElementById('slider-mc-clip-size');
+    const labelMcClipSize = document.getElementById('val-mc-clip-size');
+    if (sliderMcClipSize) {
+        sliderMcClipSize.addEventListener('input', (e) => {
+            state.clipSize = parseFloat(e.target.value);
+            if (labelMcClipSize) {
+                labelMcClipSize.textContent = state.clipSize.toFixed(2);
+            }
+            triggerRender();
+        });
+    }
+
+    const sliderMcClipFalloff = document.getElementById('slider-mc-clip-falloff');
+    const labelMcClipFalloff = document.getElementById('val-mc-clip-falloff');
+    if (sliderMcClipFalloff) {
+        sliderMcClipFalloff.addEventListener('input', (e) => {
+            state.clipFalloff = parseFloat(e.target.value);
+            if (labelMcClipFalloff) {
+                labelMcClipFalloff.textContent = state.clipFalloff.toFixed(2);
+            }
+            triggerRender();
+        });
+    }
     
     // Core Velocity
     const velXSlider = document.getElementById('slider-vel-x');
@@ -878,6 +1147,7 @@ function bindUIEventListeners() {
             btn3D.classList.remove('active');
             // Show/hide left slice options
             document.getElementById('section-slice').style.display = 'flex';
+            document.getElementById('section-3d-raymarching').style.display = 'none';
             triggerRender();
         });
 
@@ -887,6 +1157,7 @@ function bindUIEventListeners() {
             btn2D.classList.remove('active');
             // Hide slice origin panel as raymarching handles volume bounds
             document.getElementById('section-slice').style.display = 'none';
+            document.getElementById('section-3d-raymarching').style.display = 'flex';
             updateCameraVectors();
             triggerRender();
         });
@@ -1001,12 +1272,95 @@ function bindUIEventListeners() {
         link.href = renderer.canvas.toDataURL('image/png');
         link.click();
     });
+
+    // Configuration Manager listeners
+    const btnSave = document.getElementById('btn-save-config');
+    const inputConfigName = document.getElementById('input-config-name');
+    if (btnSave && inputConfigName) {
+        btnSave.addEventListener('click', () => {
+            const name = inputConfigName.value;
+            if (name && name.trim() !== '') {
+                saveCurrentConfig(name);
+                inputConfigName.value = '';
+            } else {
+                alert("Please enter a configuration name.");
+            }
+        });
+    }
+
+    const btnLoad = document.getElementById('btn-load-config');
+    const selectSaved = document.getElementById('select-saved-configs');
+    if (btnLoad && selectSaved) {
+        btnLoad.addEventListener('click', () => {
+            const name = selectSaved.value;
+            if (name) {
+                const configs = getSavedConfigs();
+                const config = configs[name];
+                if (config) {
+                    applyConfiguration(config);
+                }
+            } else {
+                alert("Please select a saved configuration to load.");
+            }
+        });
+    }
+
+    const btnDelete = document.getElementById('btn-delete-config');
+    if (btnDelete && selectSaved) {
+        btnDelete.addEventListener('click', () => {
+            const name = selectSaved.value;
+            if (name) {
+                if (confirm(`Are you sure you want to delete "${name}"?`)) {
+                    deleteConfig(name);
+                }
+            } else {
+                alert("Please select a configuration to delete.");
+            }
+        });
+    }
+
+    const btnExport = document.getElementById('btn-export-json');
+    if (btnExport) {
+        btnExport.addEventListener('click', () => {
+            exportConfigToJSON();
+        });
+    }
+
+    const btnImport = document.getElementById('btn-import-json');
+    const inputImportFile = document.getElementById('input-import-file');
+    if (btnImport && inputImportFile) {
+        btnImport.addEventListener('click', () => {
+            inputImportFile.click();
+        });
+        inputImportFile.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                importConfigFromJSON(e.target.files[0]);
+                e.target.value = ''; // Reset input
+            }
+        });
+    }
 }
 
 // Main Animation Loop
 let lastTime = performance.now();
 let fpsCounter = 0;
 let fpsTimer = 0;
+
+const keysPressed = {};
+window.addEventListener('keydown', (e) => {
+    const key = e.key.toLowerCase();
+    keysPressed[key] = true;
+    
+    // Prevent browser scrolling or navigation defaults when flying inside 3D
+    if (state.viewMode === 1 && state.isFlyMode) {
+        if (['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', ' ', 'shift'].includes(key)) {
+            e.preventDefault();
+        }
+    }
+});
+window.addEventListener('keyup', (e) => {
+    keysPressed[e.key.toLowerCase()] = false;
+});
 
 function animationFrame(timestamp) {
     requestAnimationFrame(animationFrame);
@@ -1021,6 +1375,78 @@ function animationFrame(timestamp) {
         document.getElementById('val-fps').textContent = fpsCounter;
         fpsCounter = 0;
         fpsTimer = 0;
+    }
+
+    // WASD First-Person Fly camera physics update loop
+    if (state.viewMode === 1 && state.isFlyMode) {
+        let moved = false;
+        // Frame-rate independent displacement
+        const baseSpeed = 0.002 * Math.max(1.0, Math.min(100.0, delta));
+        let speed = baseSpeed;
+        if (keysPressed['shift']) {
+            speed *= 4.0; // Accelerate with shift!
+        }
+
+        let dx = 0.0;
+        let dy = 0.0;
+        let dz = 0.0;
+
+        if (keysPressed['w']) {
+            dx += state.cameraDir[0] * speed;
+            dy += state.cameraDir[1] * speed;
+            dz += state.cameraDir[2] * speed;
+            moved = true;
+        }
+        if (keysPressed['s']) {
+            dx -= state.cameraDir[0] * speed;
+            dy -= state.cameraDir[1] * speed;
+            dz -= state.cameraDir[2] * speed;
+            moved = true;
+        }
+        if (keysPressed['d']) {
+            dx += state.cameraRight[0] * speed;
+            dy += state.cameraRight[1] * speed;
+            dz += state.cameraRight[2] * speed;
+            moved = true;
+        }
+        if (keysPressed['a']) {
+            dx -= state.cameraRight[0] * speed;
+            dy -= state.cameraRight[1] * speed;
+            dz -= state.cameraRight[2] * speed;
+            moved = true;
+        }
+        if (keysPressed['e'] || keysPressed['r']) {
+            dx += state.cameraUp[0] * speed;
+            dy += state.cameraUp[1] * speed;
+            dz += state.cameraUp[2] * speed;
+            moved = true;
+        }
+        if (keysPressed['q'] || keysPressed['f']) {
+            dx -= state.cameraUp[0] * speed;
+            dy -= state.cameraUp[1] * speed;
+            dz -= state.cameraUp[2] * speed;
+            moved = true;
+        }
+
+        if (moved) {
+            state.cameraPos[0] += dx;
+            state.cameraPos[1] += dy;
+            state.cameraPos[2] += dz;
+
+            // Sync slice origin coordinates to avoid snapping back on mode toggles
+            state.originX = state.cameraPos[0] + state.cameraDir[0] * state.camRadius;
+            state.originY = state.cameraPos[1] + state.cameraDir[1] * state.camRadius;
+            state.originZ = state.cameraPos[2] + state.cameraDir[2] * state.camRadius;
+
+            // Sync UI labels
+            document.getElementById('slider-origin-x').value = state.originX.toFixed(2);
+            document.getElementById('slider-origin-y').value = state.originY.toFixed(2);
+            document.getElementById('slider-origin-z').value = state.originZ.toFixed(2);
+            document.getElementById('val-origin-xy').textContent = `${state.originX.toFixed(2)}, ${state.originY.toFixed(2)}`;
+            document.getElementById('val-origin-zw').textContent = `${state.originZ.toFixed(2)}, ${state.originW.toFixed(2)}`;
+
+            triggerRender();
+        }
     }
 
     if (state.isAnimating) {
@@ -1058,6 +1484,257 @@ function resizeCanvas() {
     }
 }
 
+const CONFIG_KEYS = [
+    'zoom', 'resolutionScale', 'warpFactor', 'warpType', 'energyThreshold', 
+    'scaleStepsWithZoom', 'raySteps', 'isFlyMode', 'renderMode3D', 'isovalue', 
+    'mcBudget', 'mcResX', 'mcResY', 'mcResZ', 'mcInvertNormals', 'samplingZoom', 
+    'clipShape', 'clipSize', 'clipFalloff', 'originX', 'originY', 'originZ', 'originW', 
+    'rotXY', 'rotYZ', 'rotXZ', 'rotXW', 'rotYW', 'rotZW', 
+    'camTheta', 'camPhi', 'camRadius', 'boxSize', 
+    'steps', 'dt', 'soften', 'escapeR2', 'density', 'coreVelX', 'coreVelY', 'metricMode', 
+    'temporalMode', 'temporalScale', 'temporalOffset', 'temporalParam', 
+    'colorMode', 'paletteName', 'gradientScale', 'gradientPhase', 'zebraFrequency', 'zebraSharpness', 'reliefScale', 'specular'
+];
+
+const LOCAL_STORAGE_KEY = 'nbody_fractal_explorer_configs';
+
+function getSavedConfigs() {
+    try {
+        const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+        return stored ? JSON.parse(stored) : {};
+    } catch (e) {
+        console.error("Error reading from localStorage", e);
+        return {};
+    }
+}
+
+function updateSavedConfigsDropdown() {
+    const select = document.getElementById('select-saved-configs');
+    if (!select) return;
+    select.innerHTML = '';
+    
+    const configs = getSavedConfigs();
+    const keys = Object.keys(configs);
+    
+    if (keys.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.selected = true;
+        opt.textContent = 'No saved configs';
+        select.appendChild(opt);
+    } else {
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        placeholder.textContent = 'Select a config...';
+        select.appendChild(placeholder);
+        
+        keys.sort().forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            select.appendChild(opt);
+        });
+    }
+}
+
+function saveCurrentConfig(name) {
+    if (!name || name.trim() === '') return;
+    const configs = getSavedConfigs();
+    
+    const configState = {};
+    CONFIG_KEYS.forEach(key => {
+        configState[key] = state[key];
+    });
+    
+    configs[name] = {
+        state: configState,
+        seeds: state.seeds
+    };
+    
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(configs));
+    updateSavedConfigsDropdown();
+}
+
+function deleteConfig(name) {
+    if (!name) return;
+    const configs = getSavedConfigs();
+    if (configs[name]) {
+        delete configs[name];
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(configs));
+        updateSavedConfigsDropdown();
+    }
+}
+
+function exportConfigToJSON() {
+    const configState = {};
+    CONFIG_KEYS.forEach(key => {
+        configState[key] = state[key];
+    });
+    
+    const configData = {
+        state: configState,
+        seeds: state.seeds
+    };
+    
+    const blob = new Blob([JSON.stringify(configData, null, 4)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nbody_fractal_config_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function importConfigFromJSON(file) {
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const config = JSON.parse(e.target.result);
+            applyConfiguration(config);
+        } catch (err) {
+            alert("Error parsing configuration JSON file: " + err.message);
+        }
+    };
+    reader.readAsText(file);
+}
+
+function applyConfiguration(config) {
+    if (!config) return;
+    
+    if (config.state) {
+        for (const key in config.state) {
+            state[key] = config.state[key];
+        }
+    }
+    
+    if (config.seeds) {
+        state.seeds = JSON.parse(JSON.stringify(config.seeds));
+        if (manipulator) {
+            manipulator.setSeeds(state.seeds);
+        }
+    }
+    
+    syncUIFromState();
+    
+    updatePaletteSwatch();
+    updateUIElementsVisibility();
+    update3DPanelVisibility();
+    
+    const btn2D = document.getElementById('btn-mode-2d');
+    const btn3D = document.getElementById('btn-mode-3d');
+    if (btn2D && btn3D) {
+        if (state.viewMode === 1) {
+            btn3D.classList.add('active');
+            btn2D.classList.remove('active');
+            document.getElementById('section-slice').style.display = 'none';
+            document.getElementById('section-3d-raymarching').style.display = 'flex';
+        } else {
+            btn2D.classList.add('active');
+            btn3D.classList.remove('active');
+            document.getElementById('section-slice').style.display = 'flex';
+            document.getElementById('section-3d-raymarching').style.display = 'none';
+        }
+    }
+    
+    updateCameraVectors();
+    triggerRender(true);
+}
+
+function syncUIFromState() {
+    const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.value = val;
+    };
+    const setCheck = (id, checked) => {
+        const el = document.getElementById(id);
+        if (el) el.checked = checked;
+    };
+    const setText = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+    };
+
+    setVal('slider-zoom', Math.log10(state.zoom).toFixed(2));
+    setText('val-zoom', state.zoom < 0.01 ? state.zoom.toExponential(2) : state.zoom.toFixed(2));
+    setVal('slider-origin-x', state.originX.toFixed(2));
+    setVal('slider-origin-y', state.originY.toFixed(2));
+    setVal('slider-origin-z', state.originZ.toFixed(2));
+    setVal('slider-origin-w', state.originW.toFixed(2));
+    setText('val-origin-xy', `${state.originX.toFixed(2)}, ${state.originY.toFixed(2)}`);
+    setText('val-origin-zw', `${state.originZ.toFixed(2)}, ${state.originW.toFixed(2)}`);
+
+    setVal('select-metric-mode', state.metricMode);
+    setVal('slider-steps', state.steps);
+    setText('val-steps', state.steps);
+    setCheck('check-scale-steps', state.scaleStepsWithZoom);
+    setVal('slider-dt', state.dt);
+    setText('val-dt', state.dt.toFixed(2));
+    setVal('slider-soften', state.soften);
+    setText('val-soften', state.soften.toFixed(2));
+    setVal('slider-escape', state.escapeR2);
+    setText('val-escape', state.escapeR2.toFixed(1));
+    setVal('slider-energy-threshold', state.energyThreshold);
+    setText('val-energy-threshold', state.energyThreshold === 0 ? "Disabled" : state.energyThreshold.toFixed(0));
+    setVal('slider-density', state.density);
+    setText('val-density', state.density.toFixed(2));
+    setVal('slider-vel-x', state.coreVelX.toFixed(2));
+    setVal('slider-vel-y', state.coreVelY.toFixed(2));
+
+    setVal('select-temp-mode', state.temporalMode);
+    setVal('slider-temp-scale', state.temporalScale);
+    setText('val-temp-scale', state.temporalScale < 0.01 && state.temporalScale > -0.01 ? state.temporalScale.toExponential(2) : state.temporalScale.toFixed(2));
+    setVal('slider-temp-offset', state.temporalOffset);
+    setText('val-temp-offset', state.temporalOffset.toFixed(2));
+    setVal('slider-temp-param', state.temporalParam);
+    setText('val-temp-param', state.temporalParam.toFixed(2));
+
+    setVal('select-3d-render-type', state.renderMode3D);
+    setVal('slider-isovalue', state.isovalue);
+    setText('val-isovalue', state.isovalue.toFixed(2));
+    setVal('slider-mc-budget', state.mcBudget);
+    setText('val-mc-budget', state.mcBudget.toLocaleString());
+    setVal('slider-mc-res-x', state.mcResX);
+    setText('val-mc-res-x', state.mcResX);
+    setVal('slider-mc-res-y', state.mcResY);
+    setText('val-mc-res-y', state.mcResY);
+    setVal('slider-mc-res-z', state.mcResZ);
+    setText('val-mc-res-z', state.mcResZ);
+    setCheck('check-mc-invert-normals', state.mcInvertNormals);
+    setVal('select-mc-clip-shape', state.clipShape);
+    setVal('slider-mc-clip-size', state.clipSize);
+    setText('val-mc-clip-size', state.clipSize.toFixed(2));
+    setVal('slider-mc-clip-falloff', state.clipFalloff);
+    setText('val-mc-clip-falloff', state.clipFalloff.toFixed(2));
+    setVal('slider-3d-zoom', state.samplingZoom);
+    setText('val-3d-zoom', state.samplingZoom.toFixed(2));
+    setCheck('check-fly-mode', state.isFlyMode);
+    setVal('slider-ray-steps', state.raySteps);
+    setText('val-ray-steps', state.raySteps.toFixed(0));
+
+    setVal('select-color-mode', state.colorMode);
+    setVal('select-palette', state.paletteName);
+    setVal('slider-grad-scale', state.gradientScale);
+    setText('val-grad-scale', state.gradientScale.toFixed(2));
+    setVal('slider-grad-phase', state.gradientPhase);
+    setText('val-grad-phase', state.gradientPhase.toFixed(2));
+    setVal('slider-zebra-freq', state.zebraFrequency);
+    setText('val-zebra-freq', state.zebraFrequency.toFixed(1));
+    setVal('slider-zebra-sharp', state.zebraSharpness);
+    setText('val-zebra-sharp', state.zebraSharpness.toFixed(3));
+    setVal('slider-relief-scale', state.reliefScale);
+    setText('val-relief-scale', state.reliefScale.toFixed(2));
+    setVal('slider-specular', state.specular);
+    setText('val-specular', state.specular.toFixed(2));
+}
+
 // Entry Point
 async function main() {
     const canvas = document.getElementById('webgpu-canvas');
@@ -1069,7 +1746,7 @@ async function main() {
     try {
         // Initialize WebGPU renderer
         renderer = new WebGPURenderer(canvas);
-        await renderer.init();
+        await renderer.init(triTable);
         resizeCanvas();
 
         // Initialize Three.js manipulator
@@ -1091,7 +1768,7 @@ async function main() {
             for (let entry of entries) {
                 if (entry.target === canvas) {
                     resizeCanvas();
-                    triggerRender();
+                    triggerRender(false);
                 }
             }
         });
@@ -1105,6 +1782,12 @@ async function main() {
         loadPreset('simplex');
         updatePaletteSwatch();
         updateUIElementsVisibility();
+        update3DPanelVisibility();
+        updateSavedConfigsDropdown();
+
+        // Match initial viewMode (3D) panel visibility
+        document.getElementById('section-slice').style.display = 'none';
+        document.getElementById('section-3d-raymarching').style.display = 'flex';
 
         // Start requestAnimationFrame loop
         requestAnimationFrame(animationFrame);

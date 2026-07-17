@@ -22,8 +22,8 @@
             
             <div class="global-controls">
                 <div class="btn-group-3" style="width: 320px;">
-                    <button class="btn btn-primary active" id="btn-mode-2d">2D Slice</button>
-                    <button class="btn btn-primary" id="btn-mode-3d">3D Volume</button>
+                    <button class="btn btn-primary" id="btn-mode-2d">2D Slice</button>
+                    <button class="btn btn-primary active" id="btn-mode-3d">3D Volume</button>
                     <button class="btn btn-primary" id="btn-animate">Play Morph</button>
                 </div>
                 <button class="btn" id="btn-screenshot">Capture</button>
@@ -36,6 +36,34 @@
             <!-- Left Sidebar: Viewplane and Fractal parameters -->
             <div class="sidebar">
                 
+                <!-- Configurations Save/Load & JSON Export/Import -->
+                <div class="panel-section" id="section-config-manager">
+                    <div class="section-title">Save & Export Configs</div>
+                    
+                    <div class="control-row" style="flex-direction: column; gap: 8px;">
+                        <div style="display: flex; gap: 6px; width: 100%;">
+                            <input type="text" id="input-config-name" placeholder="Config Name..." style="flex: 1; padding: 6px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.8rem;">
+                            <button class="btn" id="btn-save-config" style="padding: 6px 12px; font-size: 0.8rem; background-color: var(--primary, #00d1b2); color: white;">Save</button>
+                        </div>
+                    </div>
+
+                    <div class="control-row" style="flex-direction: column; gap: 8px;">
+                        <div style="display: flex; gap: 6px; width: 100%;">
+                            <select id="select-saved-configs" style="flex: 1; padding: 6px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.8rem;">
+                                <option value="" disabled selected>No saved configs</option>
+                            </select>
+                            <button class="btn btn-secondary" id="btn-load-config" style="padding: 6px 12px; font-size: 0.8rem;">Load</button>
+                            <button class="btn btn-secondary" id="btn-delete-config" style="padding: 6px 10px; font-size: 0.8rem; background-color: #8b0000; color: white;">✖</button>
+                        </div>
+                    </div>
+
+                    <div class="control-row" style="justify-content: space-between; gap: 8px; margin-top: 4px;">
+                        <button class="btn btn-secondary" id="btn-export-json" style="flex: 1; padding: 6px; font-size: 0.8rem;">Export JSON</button>
+                        <button class="btn btn-secondary" id="btn-import-json" style="flex: 1; padding: 6px; font-size: 0.8rem;">Import JSON</button>
+                        <input type="file" id="input-import-file" accept=".json" style="display: none;">
+                    </div>
+                </div>
+
                 <!-- 4D Rotations and Slice settings -->
                 <div class="panel-section" id="section-slice">
                     <div class="section-title">
@@ -142,14 +170,14 @@
                     <div class="control-row">
                         <div class="control-label">
                             <span>Iteration Steps</span>
-                            <span class="control-value" id="val-steps">5</span>
+                            <span class="control-value" id="val-steps">1</span>
                         </div>
-                        <input type="range" id="slider-steps" min="1" max="300" step="1" value="5">
+                        <input type="range" id="slider-steps" min="1" max="300" step="1" value="1">
                     </div>
 
                     <div class="control-row">
                         <label class="control-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
-                            <input type="checkbox" id="check-scale-steps" checked style="width: 16px; height: 16px; margin: 0; cursor: pointer;">
+                            <input type="checkbox" id="check-scale-steps" style="width: 16px; height: 16px; margin: 0; cursor: pointer;">
                             <span>Scale Steps with Zoom</span>
                         </label>
                     </div>
@@ -165,9 +193,9 @@
                     <div class="control-row">
                         <div class="control-label">
                             <span>Gravity Softening</span>
-                            <span class="control-value" id="val-soften">3.14</span>
+                            <span class="control-value" id="val-soften">2.09</span>
                         </div>
-                        <input type="range" id="slider-soften" min="0.01" max="10.0" step="0.01" value="3.14">
+                        <input type="range" id="slider-soften" min="0.01" max="10.0" step="0.01" value="2.09">
                     </div>
 
                     <div class="control-row">
@@ -189,9 +217,9 @@
                     <div class="control-row">
                         <div class="control-label">
                             <span>Seed Attraction Density</span>
-                            <span class="control-value" id="val-density">1.0</span>
+                            <span class="control-value" id="val-density">1.70</span>
                         </div>
-                        <input type="range" id="slider-density" min="0.1" max="25.0" step="0.1" value="1.0">
+                        <input type="range" id="slider-density" min="0.1" max="25.0" step="0.1" value="1.70">
                     </div>
 
                     <div class="control-row">
@@ -199,8 +227,8 @@
                             <span>Core Velocity (Vx / Vy)</span>
                         </div>
                         <div class="coord-grid">
-                            <input type="range" id="slider-vel-x" min="-2.0" max="2.0" step="0.01" value="0.00">
-                            <input type="range" id="slider-vel-y" min="-2.0" max="2.0" step="0.01" value="0.00">
+                            <input type="range" id="slider-vel-x" min="-2.0" max="2.0" step="0.01" value="-0.30">
+                            <input type="range" id="slider-vel-y" min="-2.0" max="2.0" step="0.01" value="0.60">
                         </div>
                     </div>
                 </div>
@@ -214,7 +242,7 @@
                             <option value="0">Plane Slice Coordinate (Linear)</option>
                             <option value="1">Constant W Value</option>
                             <option value="2">Radial: scale * |pos| + offset</option>
-                            <option value="3">Wave: scale * sin(f * |pos|) + offset</option>
+                            <option value="3" selected>Wave: scale * sin(f * |pos|) + offset</option>
                             <option value="4">Gradient Direction: scale * (x+y-z) + offset</option>
                             <option value="5">Hyperbolic Saddle: scale * (x² - y²) + offset</option>
                         </select>
@@ -223,25 +251,138 @@
                     <div class="control-row">
                         <div class="control-label">
                             <span>Function Scale</span>
-                            <span class="control-value" id="val-temp-scale">1.00</span>
+                            <span class="control-value" id="val-temp-scale">-0.35</span>
                         </div>
-                        <input type="range" id="slider-temp-scale" min="-5.0" max="5.0" step="0.05" value="1.00">
+                        <input type="range" id="slider-temp-scale" min="-5.0" max="5.0" step="0.05" value="-0.35">
                     </div>
 
                     <div class="control-row">
                         <div class="control-label">
                             <span>Function Offset</span>
-                            <span class="control-value" id="val-temp-offset">0.00</span>
+                            <span class="control-value" id="val-temp-offset">0.05</span>
                         </div>
-                        <input type="range" id="slider-temp-offset" min="-3.0" max="3.0" step="0.05" value="0.00">
+                        <input type="range" id="slider-temp-offset" min="-3.0" max="3.0" step="0.05" value="0.05">
                     </div>
 
                     <div class="control-row">
                         <div class="control-label">
                             <span>Wave Frequency / Param</span>
-                            <span class="control-value" id="val-temp-param">3.14</span>
+                            <span class="control-value" id="val-temp-param">1.55</span>
                         </div>
-                        <input type="range" id="slider-temp-param" min="0.1" max="15.0" step="0.05" value="3.14">
+                        <input type="range" id="slider-temp-param" min="0.1" max="15.0" step="0.05" value="1.55">
+                    </div>
+                </div>
+
+                <!-- 3D Raymarching Settings (Only active/visible in 3D Mode) -->
+                <div class="panel-section" id="section-3d-raymarching" style="display: none;">
+                    <div class="section-title">3D Volumetric Settings</div>
+                    
+                    <div class="control-row">
+                        <span class="control-label">3D Render Mode</span>
+                        <select id="select-3d-render-type">
+                            <option value="0">Raymarched Volume (Density)</option>
+                            <option value="1" selected>Marching Cubes (Isosurface)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-row" id="row-isovalue" style="display: none;">
+                        <div class="control-label">
+                            <span>Isovalue Threshold</span>
+                            <span class="control-value" id="val-isovalue">2.05</span>
+                        </div>
+                        <input type="range" id="slider-isovalue" min="0.05" max="25.0" step="0.05" value="2.05">
+                    </div>
+
+                    <div class="control-row" id="row-mc-budget" style="display: none;">
+                        <div class="control-label">
+                            <span>Max Triangle Budget</span>
+                            <span class="control-value" id="val-mc-budget">500,000</span>
+                        </div>
+                        <input type="range" id="slider-mc-budget" min="50000" max="5000000" step="50000" value="500000">
+                    </div>
+
+                    <div class="control-row" id="row-mc-res-x" style="display: none;">
+                        <div class="control-label">
+                            <span>Grid Resolution X</span>
+                            <span class="control-value" id="val-mc-res-x">252</span>
+                        </div>
+                        <input type="range" id="slider-mc-res-x" min="16" max="512" step="4" value="252">
+                    </div>
+
+                    <div class="control-row" id="row-mc-res-y" style="display: none;">
+                        <div class="control-label">
+                            <span>Grid Resolution Y</span>
+                            <span class="control-value" id="val-mc-res-y">252</span>
+                        </div>
+                        <input type="range" id="slider-mc-res-y" min="16" max="512" step="4" value="252">
+                    </div>
+
+                    <div class="control-row" id="row-mc-res-z" style="display: none;">
+                        <div class="control-label">
+                            <span>Grid Resolution Z</span>
+                            <span class="control-value" id="val-mc-res-z">252</span>
+                        </div>
+                        <input type="range" id="slider-mc-res-z" min="16" max="512" step="4" value="252">
+                    </div>
+                    <div class="control-row" id="row-mc-presets" style="display: none; justify-content: space-between; gap: 8px;">
+                        <button class="btn btn-secondary" id="btn-mc-preview" style="flex: 1; padding: 6px 12px; font-size: 0.8rem;">Preview (64³)</button>
+                        <button class="btn" id="btn-mc-final" style="flex: 1; padding: 6px 12px; font-size: 0.8rem; background-color: var(--primary, #00d1b2); color: white;">Final (512³)</button>
+                    </div>
+
+                    <div class="control-row" id="row-mc-invert-normals" style="display: none;">
+                        <label class="control-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="check-mc-invert-normals" style="width: 16px; height: 16px; margin: 0; cursor: pointer;">
+                            <span>Invert Normals</span>
+                        </label>
+                    </div>
+
+                    <div class="control-row" id="row-mc-clip-shape">
+                        <span class="control-label">Volume Clip Shape</span>
+                        <select id="select-mc-clip-shape" style="flex: 1; padding: 4px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444;">
+                            <option value="0">None</option>
+                            <option value="1" selected>Sphere</option>
+                            <option value="2">Cube</option>
+                            <option value="3">Chamfer Cube</option>
+                        </select>
+                    </div>
+
+                    <div class="control-row" id="row-mc-clip-size">
+                        <div class="control-label">
+                            <span>Clip Size</span>
+                            <span class="control-value" id="val-mc-clip-size">1.40</span>
+                        </div>
+                        <input type="range" id="slider-mc-clip-size" min="0.10" max="3.00" step="0.05" value="1.40">
+                    </div>
+
+                    <div class="control-row" id="row-mc-clip-falloff">
+                        <div class="control-label">
+                            <span>Clip Falloff</span>
+                            <span class="control-value" id="val-mc-clip-falloff">0.44</span>
+                        </div>
+                        <input type="range" id="slider-mc-clip-falloff" min="0.00" max="1.00" step="0.02" value="0.44">
+                    </div>
+
+                    <div class="control-row" id="row-3d-zoom">
+                        <div class="control-label">
+                            <span>Sampling Zoom (Fractal)</span>
+                            <span class="control-value" id="val-3d-zoom">0.75</span>
+                        </div>
+                        <input type="range" id="slider-3d-zoom" min="0.05" max="5.00" step="0.05" value="0.75">
+                    </div>
+
+                    <div class="control-row" id="row-ray-steps">
+                        <div class="control-label">
+                            <span>Raymarch Steps (Res Scale)</span>
+                            <span class="control-value" id="val-ray-steps">80</span>
+                        </div>
+                        <input type="range" id="slider-ray-steps" min="16" max="256" step="8" value="80">
+                    </div>
+
+                    <div class="control-row">
+                        <label class="control-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="check-fly-mode" style="width: 16px; height: 16px; margin: 0; cursor: pointer;">
+                            <span>First-Person Fly Mode (WASD)</span>
+                        </label>
                     </div>
                 </div>
             </div>
