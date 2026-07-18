@@ -208,14 +208,65 @@ export class WebGPURenderer {
         this.device.queue.writeBuffer(this.mcTriTableBuffer, 0, triTableData);
     }
 
-    rebuildComputePipeline(bodyCount) {
-        if (bodyCount === this.currentBodyCount) return;
+    rebuildComputePipeline(bodyCount, specs = null) {
+        // Build a cache key of current build properties to avoid redundant recompilation
+        const cacheKey = JSON.stringify({ bodyCount, specs });
+        if (cacheKey === this.currentPipelineCacheKey) return;
+        this.currentPipelineCacheKey = cacheKey;
         this.currentBodyCount = bodyCount;
 
-        const processedSource = this.rawShaderSource.replace(
+        let processedSource = this.rawShaderSource.replace(
             /const BODY_COUNT = \d+u;/g,
             `const BODY_COUNT = ${bodyCount}u;`
         );
+
+        if (specs) {
+            if (specs.steps !== undefined) {
+                processedSource = processedSource.replace(
+                    /const SHADER_STEPS = -?\d+;/g,
+                    `const SHADER_STEPS = ${specs.steps};`
+                );
+            }
+            if (specs.interactionMode !== undefined) {
+                processedSource = processedSource.replace(
+                    /const SHADER_INTERACTION_MODE = -?\d+;/g,
+                    `const SHADER_INTERACTION_MODE = ${specs.interactionMode};`
+                );
+            }
+            if (specs.metricMode !== undefined) {
+                processedSource = processedSource.replace(
+                    /const SHADER_METRIC_MODE = -?\d+;/g,
+                    `const SHADER_METRIC_MODE = ${specs.metricMode};`
+                );
+            }
+            if (specs.warpType !== undefined) {
+                processedSource = processedSource.replace(
+                    /const SHADER_WARP_TYPE = -?\d+;/g,
+                    `const SHADER_WARP_TYPE = ${specs.warpType};`
+                );
+            }
+            if (specs.seeds && specs.seeds.length > 0) {
+                const posStrings = specs.seeds.map(s => 
+                    `vec4f(${Number(s.position[0]).toFixed(6)}, ${Number(s.position[1]).toFixed(6)}, ${Number(s.position[2]).toFixed(6)}, ${Number(s.position[3]).toFixed(6)})`
+                ).join(", ");
+                const massStrings = specs.seeds.map(s => 
+                    `${Number(s.mass).toFixed(6)}`
+                ).join(", ");
+
+                processedSource = processedSource.replace(
+                    /const SPEC_SEEDS = false;/g,
+                    "const SPEC_SEEDS = true;"
+                );
+                processedSource = processedSource.replace(
+                    /const seed_positions = array<vec4f, \d+>\(vec4f\(0.0\)\);/g,
+                    `const seed_positions = array<vec4f, ${specs.seeds.length}>(${posStrings});`
+                );
+                processedSource = processedSource.replace(
+                    /const seed_masses = array<f32, \d+>\(0.0\);/g,
+                    `const seed_masses = array<f32, ${specs.seeds.length}>(${massStrings});`
+                );
+            }
+        }
 
         const shaderModule = this.device.createShaderModule({
             code: processedSource
@@ -493,6 +544,7 @@ export class WebGPURenderer {
         u32[59] = data.clipShape;
         f32[60] = data.clipSize;
         f32[61] = data.clipFalloff;
+        u32[62] = data.interactionMode;
         f32.set(data.modelMatrix, 64);
         f32.set(data.invModelMatrix, 80);
 
@@ -561,9 +613,9 @@ export class WebGPURenderer {
     }
 
     // Update seed data storage buffer
-    writeSeeds(seeds) {
+    writeSeeds(seeds, specs = null) {
         const count = Math.max(1, seeds.length);
-        this.rebuildComputePipeline(count);
+        this.rebuildComputePipeline(count, specs);
 
         const f32 = new Float32Array(this.seedsData);
         f32.fill(0); // clear

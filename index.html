@@ -169,6 +169,14 @@
                     </div>
 
                     <div class="control-row">
+                        <span class="control-label">Field Interaction Law</span>
+                        <select id="select-interaction-mode">
+                            <option value="0" selected>Newtonian Gravity (Always Attractive)</option>
+                            <option value="1">Coulomb Electrostatics (Repulsive/Attractive)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-row">
                         <div class="control-label">
                             <span>Iteration Steps</span>
                             <span class="control-value" id="val-steps">1</span>
@@ -504,9 +512,9 @@
 
                         <div class="control-row">
                             <div class="control-label">
-                                <span>Seed Mass (Attractive Force)</span>
+                                <span>Seed Mass / Charge</span>
                             </div>
-                            <input type="number" id="input-seed-mass" step="0.1" value="1.0" min="0.1" max="10.0" disabled>
+                            <input type="number" id="input-seed-mass" step="0.1" value="1.0" min="-10.0" max="10.0" disabled>
                         </div>
                     </div>
                 </div>

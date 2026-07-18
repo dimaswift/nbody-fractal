@@ -183,6 +183,8 @@ const state = {
     fractalPivotZ: 0.0,
     fractalPivotW: 0.0,
     colorSource: 0,
+    isUserInteracting: false,
+    interactionMode: 0,
     hollowRadius: 0,
     operators: [],
     modelMatrix: new Float32Array([
@@ -412,6 +414,10 @@ function triggerRender(forceMcRecompute = true) {
         renderer.mcNeedsRecompute = true;
     }
 
+    const activeResX = state.isUserInteracting ? 64 : state.mcResX;
+    const activeResY = state.isUserInteracting ? 64 : state.mcResY;
+    const activeResZ = state.isUserInteracting ? 64 : state.mcResZ;
+
     const { sliceU, sliceV } = getSlicePlaneVectors();
 
     // Map velocity parameters to 4D
@@ -453,15 +459,16 @@ function triggerRender(forceMcRecompute = true) {
         cameraUp: state.cameraUp,
         cameraRight: state.cameraRight,
         isovalue: state.isovalue,
-        gridSizeX: state.mcResX,
-        gridSizeY: state.mcResY,
-        gridSizeZ: state.mcResZ,
+        gridSizeX: activeResX,
+        gridSizeY: activeResY,
+        gridSizeZ: activeResZ,
         maxVertices: state.mcBudget * 3,
         invertNormals: state.mcInvertNormals,
         samplingZoom: state.samplingZoom,
         clipShape: state.clipShape,
         clipSize: state.clipSize,
         clipFalloff: state.clipFalloff,
+        interactionMode: state.interactionMode,
         modelMatrix: state.modelMatrix,
         invModelMatrix: mat4Transpose(new Float32Array(16), state.modelMatrix),
         fractalPivot: new Float32Array([state.fractalPivotX, state.fractalPivotY, state.fractalPivotZ, state.fractalPivotW]),
@@ -491,7 +498,14 @@ function triggerRender(forceMcRecompute = true) {
     };
 
     // Update GPU buffers
-    renderer.writeSeeds(state.seeds);
+    const specs = state.isUserInteracting ? null : {
+        steps: state.steps,
+        interactionMode: state.interactionMode,
+        metricMode: state.metricMode,
+        warpType: state.warpType,
+        seeds: state.seeds
+    };
+    renderer.writeSeeds(state.seeds, specs);
     renderer.writeUniforms(computeUniforms);
     renderer.writeRenderUniforms(renderUniforms);
 
@@ -499,9 +513,9 @@ function triggerRender(forceMcRecompute = true) {
     renderer.render(
         state.viewMode === 1 && state.renderMode3D === 1,
         {
-            gridX: state.mcResX,
-            gridY: state.mcResY,
-            gridZ: state.mcResZ,
+            gridX: activeResX,
+            gridY: activeResY,
+            gridZ: activeResZ,
             budget: state.mcBudget
         }
     );
@@ -918,6 +932,7 @@ function initCanvasMouseEvents(canvas) {
 
     canvas.addEventListener('pointerdown', (e) => {
         isDragging = true;
+        state.isUserInteracting = true;
         startX = e.clientX;
         startY = e.clientY;
         canvas.setPointerCapture(e.pointerId);
@@ -997,7 +1012,9 @@ function initCanvasMouseEvents(canvas) {
     canvas.addEventListener('pointerup', (e) => {
         if (isDragging) {
             isDragging = false;
+            state.isUserInteracting = false;
             canvas.releasePointerCapture(e.pointerId);
+            triggerRender();
         }
     });
 
@@ -1047,6 +1064,23 @@ function update3DPanelVisibility() {
 
 // Set up UI sliders listeners
 function bindUIEventListeners() {
+    // Track user interaction state to build specialized pipelines on drag release
+    window.addEventListener('pointerdown', (e) => {
+        if (
+            e.target.tagName === 'INPUT' || 
+            e.target.tagName === 'SELECT' || 
+            (document.getElementById('manipulator-container') && document.getElementById('manipulator-container').contains(e.target))
+        ) {
+            state.isUserInteracting = true;
+        }
+    });
+
+    window.addEventListener('pointerup', () => {
+        if (state.isUserInteracting) {
+            state.isUserInteracting = false;
+            triggerRender();
+        }
+    });
     const bindSlider = (id, stateKey, labelId, transform = (v) => v, isRenderOnly = false) => {
         const slider = document.getElementById(id);
         const label = document.getElementById(labelId);
@@ -1450,6 +1484,14 @@ function bindUIEventListeners() {
             triggerRender();
         });
     }
+
+    const interactionModeSelect = document.getElementById('select-interaction-mode');
+    if (interactionModeSelect) {
+        interactionModeSelect.addEventListener('change', (e) => {
+            state.interactionMode = parseInt(e.target.value);
+            triggerRender();
+        });
+    }
     bindSlider('slider-temp-scale', 'temporalScale', 'val-temp-scale');
     bindSlider('slider-temp-offset', 'temporalOffset', 'val-temp-offset');
     bindSlider('slider-temp-param', 'temporalParam', 'val-temp-param');
@@ -1476,7 +1518,8 @@ function bindUIEventListeners() {
         const y = parseFloat(inpY.value) || 0;
         const z = parseFloat(inpZ.value) || 0;
         const w = parseFloat(inpW.value) || 0;
-        const m = parseFloat(inpM.value) || 1.0;
+        const valM = parseFloat(inpM.value);
+        const m = isNaN(valM) ? 1.0 : valM;
 
         state.seeds[idx].position = [x, y, z, w];
         state.seeds[idx].mass = m;
@@ -1732,10 +1775,22 @@ window.addEventListener('keydown', (e) => {
         if (['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', ' ', 'shift'].includes(key)) {
             e.preventDefault();
         }
+    } else if (state.viewMode === 1) {
+        if (key === 'q' || key === 'e') {
+            e.preventDefault();
+            state.isUserInteracting = true;
+        }
     }
 });
 window.addEventListener('keyup', (e) => {
-    keysPressed[e.key.toLowerCase()] = false;
+    const key = e.key.toLowerCase();
+    keysPressed[key] = false;
+    if (state.viewMode === 1 && !state.isFlyMode) {
+        if (key === 'q' || key === 'e') {
+            state.isUserInteracting = false;
+            triggerRender();
+        }
+    }
 });
 
 function animationFrame(timestamp) {
@@ -1751,6 +1806,27 @@ function animationFrame(timestamp) {
         document.getElementById('val-fps').textContent = fpsCounter;
         fpsCounter = 0;
         fpsTimer = 0;
+    }
+
+    // Subject Roll rotation Q/E keys update loop (only outside Fly Mode)
+    if (state.viewMode === 1 && !state.isFlyMode) {
+        let rolled = false;
+        const rollSpeed = 0.001 * Math.max(1.0, Math.min(100.0, delta));
+        let dZ = 0.0;
+        
+        if (keysPressed['q']) {
+            dZ -= rollSpeed;
+            rolled = true;
+        }
+        if (keysPressed['e']) {
+            dZ += rollSpeed;
+            rolled = true;
+        }
+        
+        if (rolled) {
+            applyIncrementalRotation(0.0, 0.0, dZ);
+            triggerRender(false);
+        }
     }
 
     // WASD First-Person Fly camera physics update loop
@@ -1870,7 +1946,7 @@ const CONFIG_KEYS = [
     'steps', 'dt', 'soften', 'escapeR2', 'density', 'coreVelX', 'coreVelY', 'metricMode', 
     'temporalMode', 'temporalScale', 'temporalOffset', 'temporalParam', 
     'colorMode', 'paletteName', 'gradientScale', 'gradientPhase', 'zebraFrequency', 'zebraSharpness', 'reliefScale', 'specular',
-    'fractalPivotX', 'fractalPivotY', 'fractalPivotZ', 'fractalPivotW', 'colorSource', 'hollowRadius', 'operators', 'modelMatrix'
+    'fractalPivotX', 'fractalPivotY', 'fractalPivotZ', 'fractalPivotW', 'colorSource', 'hollowRadius', 'operators', 'modelMatrix', 'interactionMode'
 ];
 
 const LOCAL_STORAGE_KEY = 'nbody_fractal_explorer_configs';
@@ -2063,6 +2139,7 @@ function syncUIFromState() {
     setText('val-origin-zw', `${state.originZ.toFixed(2)}, ${state.originW.toFixed(2)}`);
 
     setVal('select-metric-mode', state.metricMode);
+    setVal('select-interaction-mode', state.interactionMode);
     setVal('slider-steps', state.steps);
     setText('val-steps', state.steps);
     setCheck('check-scale-steps', state.scaleStepsWithZoom);
@@ -2275,6 +2352,16 @@ function mat4FromRotationY(out, rad) {
     return out;
 }
 
+function mat4FromRotationZ(out, rad) {
+    const s = Math.sin(rad);
+    const c = Math.cos(rad);
+    out[0] = c;  out[1] = s; out[2] = 0; out[3] = 0;
+    out[4] = -s; out[5] = c; out[6] = 0; out[7] = 0;
+    out[8] = 0;  out[9] = 0; out[10] = 1;out[11] = 0;
+    out[12] = 0; out[13] = 0;out[14] = 0;out[15] = 1;
+    return out;
+}
+
 function mat4Transpose(out, a) {
     out[0] = a[0];  out[1] = a[4];  out[2] = a[8];  out[3] = a[12];
     out[4] = a[1];  out[5] = a[5];  out[6] = a[9];  out[7] = a[13];
@@ -2283,16 +2370,21 @@ function mat4Transpose(out, a) {
     return out;
 }
 
-function applyIncrementalRotation(dx, dy) {
+function applyIncrementalRotation(dx, dy, dz = 0.0) {
     const tempX = new Float32Array(16);
     const tempY = new Float32Array(16);
-    const tempInc = new Float32Array(16);
+    const tempZ = new Float32Array(16);
+    const tempInc1 = new Float32Array(16);
+    const tempInc2 = new Float32Array(16);
     const nextMatrix = new Float32Array(16);
     
     mat4FromRotationX(tempX, dy);
     mat4FromRotationY(tempY, dx);
-    mat4Multiply(tempInc, tempX, tempY);
-    mat4Multiply(nextMatrix, tempInc, state.modelMatrix);
+    mat4FromRotationZ(tempZ, dz);
+    
+    mat4Multiply(tempInc1, tempX, tempY);
+    mat4Multiply(tempInc2, tempZ, tempInc1);
+    mat4Multiply(nextMatrix, tempInc2, state.modelMatrix);
     state.modelMatrix = nextMatrix;
 }
 

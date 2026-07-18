@@ -1,6 +1,14 @@
 // WebGPU Shaders for 4D N-Body Fractal Explorer
 
 const BODY_COUNT = 32u;
+const SHADER_STEPS = -1;
+const SHADER_INTERACTION_MODE = -1;
+const SHADER_METRIC_MODE = -1;
+const SHADER_WARP_TYPE = -1;
+
+const SPEC_SEEDS = false;
+const seed_positions = array<vec4f, 1>(vec4f(0.0));
+const seed_masses = array<f32, 1>(0.0);
 
 struct ShapeOperator {
     shape_type: u32,
@@ -57,7 +65,7 @@ struct Uniforms {
 
     clip_size: f32,
     clip_falloff: f32,
-    pad_m0: f32,
+    interaction_mode: u32,
     pad_m1: f32,
     model_matrix: mat4x4f,
     inv_model_matrix: mat4x4f,
@@ -152,7 +160,16 @@ fn computeAccelerations(b: ptr<function, array<Body, BODY_COUNT>>) -> array<vec4
             let r2 = dot(r, r) + uniforms.soften;
             let inv = inverseSqrt(r2);
             let inv3 = inv * inv * inv;
-            a[i] = a[i] + (*b)[j].mass * r * inv3;
+            let interact_mode = i32(uniforms.interaction_mode);
+            var active_interact = interact_mode;
+            if (SHADER_INTERACTION_MODE >= 0) {
+                active_interact = SHADER_INTERACTION_MODE;
+            }
+            if (active_interact == 1) {
+                a[i] = a[i] - (*b)[i].mass * (*b)[j].mass * r * inv3;
+            } else {
+                a[i] = a[i] + (*b)[j].mass * r * inv3;
+            }
         }
     }
     return a;
@@ -165,13 +182,18 @@ fn EvaluateFractal(initial_pos: vec4f) -> f32 {
     let r = length(position.xyz);
     if (r > 0.0 && uniforms.warp_factor > 0.0) {
         var r_new = r;
-        if (uniforms.warp_type == 0u) {
+        let w_type = i32(uniforms.warp_type);
+        var active_warp = w_type;
+        if (SHADER_WARP_TYPE >= 0) {
+            active_warp = SHADER_WARP_TYPE;
+        }
+        if (active_warp == 0) {
             // Logarithmic (Smooth Log)
             r_new = log(1.0 + uniforms.warp_factor * r) / uniforms.warp_factor;
-        } else if (uniforms.warp_type == 1u) {
+        } else if (active_warp == 1) {
             // Hyperbolic (Arcsinh)
             r_new = asinh(uniforms.warp_factor * r) / uniforms.warp_factor;
-        } else if (uniforms.warp_type == 2u) {
+        } else if (active_warp == 2) {
             // Poincaré (Tanh Disk)
             r_new = tanh(uniforms.warp_factor * r) / uniforms.warp_factor;
         }
@@ -182,12 +204,21 @@ fn EvaluateFractal(initial_pos: vec4f) -> f32 {
     
     // Initialize bodies from seeds
     for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
-        let seed = seeds[i];
-        let d = length(position - seed.position);
+        var seed_pos: vec4f;
+        var seed_mass: f32;
+        if (SPEC_SEEDS) {
+            seed_pos = seed_positions[i];
+            seed_mass = seed_masses[i];
+        } else {
+            let seed = seeds[i];
+            seed_pos = seed.position;
+            seed_mass = seed.mass;
+        }
+        let d = length(position - seed_pos);
         let val = uniforms.density / exp(d);
         b[i].position = vec4f(val);
         b[i].velocity = vec4f(0.0);
-        b[i].mass = seed.mass;
+        b[i].mass = seed_mass;
     }
     
     if (BODY_COUNT > 0u) {
@@ -203,8 +234,19 @@ fn EvaluateFractal(initial_pos: vec4f) -> f32 {
     var accum = 0.0;
     var escape_step = 0;
     
-    for (var s = 0; s <= uniforms.steps; s = s + 1) {
-        if (alive || uniforms.metric_mode == 1u) {
+    var steps_limit = uniforms.steps;
+    if (SHADER_STEPS >= 0) {
+        steps_limit = SHADER_STEPS;
+    }
+    
+    let m_mode = i32(uniforms.metric_mode);
+    var active_metric = m_mode;
+    if (SHADER_METRIC_MODE >= 0) {
+        active_metric = SHADER_METRIC_MODE;
+    }
+    
+    for (var s = 0; s <= steps_limit; s = s + 1) {
+        if (alive || active_metric == 1) {
             // Update positions (Verlet step 1)
             for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
                 b[i].position = b[i].position + b[i].velocity * dt + 0.5 * a0[i] * dt2;
@@ -244,7 +286,7 @@ fn EvaluateFractal(initial_pos: vec4f) -> f32 {
                     escape_step = s;
                     alive = false;
                 }
-                if (uniforms.metric_mode != 1u) {
+                if (active_metric != 1) {
                     break; // Break immediately if we are not in Total KE (Full Steps) mode
                 }
             }
@@ -253,13 +295,13 @@ fn EvaluateFractal(initial_pos: vec4f) -> f32 {
         }
     }
     
-    if (uniforms.metric_mode == 0u) {
+    if (active_metric == 0) {
         return accum;
-    } else if (uniforms.metric_mode == 1u) {
+    } else if (active_metric == 1) {
         return accum;
     } else {
         if (alive) {
-            return f32(uniforms.steps);
+            return f32(steps_limit);
         } else {
             return f32(escape_step);
         }
