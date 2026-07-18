@@ -26,6 +26,7 @@
                     <button class="btn btn-primary active" id="btn-mode-3d">3D Volume</button>
                     <button class="btn btn-primary" id="btn-animate">Play Morph</button>
                 </div>
+                <button class="btn btn-secondary" id="btn-export-stl" style="display: none; background-color: #4a7729; color: white;">Export STL</button>
                 <button class="btn" id="btn-screenshot">Capture</button>
             </div>
         </header>
@@ -296,9 +297,9 @@
                     <div class="control-row" id="row-mc-budget" style="display: none;">
                         <div class="control-label">
                             <span>Max Triangle Budget</span>
-                            <span class="control-value" id="val-mc-budget">500,000</span>
+                            <span class="control-value" id="val-mc-budget">524,288</span>
                         </div>
-                        <input type="range" id="slider-mc-budget" min="50000" max="5000000" step="50000" value="500000">
+                        <input type="range" id="slider-mc-budget" min="65536" max="16777216" step="65536" value="524288">
                     </div>
 
                     <div class="control-row" id="row-mc-res-x" style="display: none;">
@@ -368,6 +369,47 @@
                             <span class="control-value" id="val-3d-zoom">0.75</span>
                         </div>
                         <input type="range" id="slider-3d-zoom" min="0.05" max="5.00" step="0.05" value="0.75">
+                    </div>
+
+                    <!-- Rendering Volume Size slider -->
+                    <div class="control-row" id="row-mc-box-size">
+                        <div class="control-label">
+                            <span>Rendering Volume Size</span>
+                            <span class="control-value" id="val-mc-box-size">1.80</span>
+                        </div>
+                        <input type="range" id="slider-mc-box-size" min="0.10" max="4.00" step="0.05" value="1.80">
+                    </div>
+
+                    <!-- Boolean CSG Shape Operators container -->
+                    <div id="row-mc-boolean" style="display: none; flex-direction: column; gap: 10px; border: 1px solid #333; padding: 12px; border-radius: 6px; background: rgba(0, 0, 0, 0.2); margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight: 500; font-size: 0.9rem; color: #aaa;">CSG Boolean Operators</span>
+                            <button class="btn btn-secondary" id="btn-add-op" style="padding: 4px 8px; font-size: 0.75rem; background-color: #3b5998; color: white; border: none; border-radius: 4px; cursor: pointer;">+ Add</button>
+                        </div>
+                        <div id="operators-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 300px; overflow-y: auto; padding-right: 4px;">
+                            <!-- Dynamic operators elements will be rendered here -->
+                        </div>
+                    </div>
+
+                    <!-- Fractal sampling pivot inputs -->
+                    <div class="control-row" id="row-mc-pivot">
+                        <div class="control-label">
+                            <span>Sampling Pivot (X / Y)</span>
+                        </div>
+                        <div class="coord-grid">
+                            <input type="number" id="input-pivot-x" step="0.05" value="0.00" style="padding: 6px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.8rem;">
+                            <input type="number" id="input-pivot-y" step="0.05" value="0.00" style="padding: 6px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.8rem;">
+                        </div>
+                    </div>
+
+                    <div class="control-row" id="row-mc-pivot-zw">
+                        <div class="control-label">
+                            <span>Sampling Pivot (Z / W)</span>
+                        </div>
+                        <div class="coord-grid">
+                            <input type="number" id="input-pivot-z" step="0.05" value="0.00" style="padding: 6px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.8rem;">
+                            <input type="number" id="input-pivot-w" step="0.05" value="0.00" style="padding: 6px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.8rem;">
+                        </div>
                     </div>
 
                     <div class="control-row" id="row-ray-steps">
@@ -479,6 +521,14 @@
                             <option value="0">Zebra High-Contrast Contours</option>
                             <option value="1" selected>Smooth Sine/Cosine Gradient</option>
                             <option value="2">Normal-Mapped Relief Shading</option>
+                        </select>
+                    </div>
+
+                    <div class="control-row" id="row-color-source">
+                        <span class="control-label">Color Mapping Source</span>
+                        <select id="select-color-source">
+                            <option value="0" selected>Distance from Center</option>
+                            <option value="1">Surface Curvature</option>
                         </select>
                     </div>
 

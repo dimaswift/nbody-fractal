@@ -2,6 +2,15 @@
 
 const BODY_COUNT = 32u;
 
+struct ShapeOperator {
+    shape_type: u32,
+    op_type: u32,
+    size: f32,
+    falloff: f32,
+    center: vec4f,
+    scale: vec4f,
+};
+
 struct Uniforms {
     resolution: vec2f,
     steps: i32,
@@ -48,8 +57,21 @@ struct Uniforms {
 
     clip_size: f32,
     clip_falloff: f32,
-    model_rot_x: f32,
-    model_rot_y: f32,
+    pad_m0: f32,
+    pad_m1: f32,
+    model_matrix: mat4x4f,
+    inv_model_matrix: mat4x4f,
+    fractal_pivot: vec4f,
+    hollow_radius: f32,
+    pad_h0: f32,
+    pad_h1: f32,
+    pad_h2: f32,
+
+    operator_count: u32,
+    pad_op0: u32,
+    pad_op1: u32,
+    pad_op2: u32,
+    operators: array<ShapeOperator, 8>,
 };
 
 struct Seed {
@@ -86,6 +108,10 @@ struct RenderUniforms {
     palette_b: vec4f,
     palette_c: vec4f,
     palette_d: vec4f,
+    color_source: u32,
+    pad_a: u32,
+    pad_b: u32,
+    pad_c: u32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -325,11 +351,8 @@ fn compute_main(@builtin(global_invocation_id) id: vec3u) {
             ro = uniforms.camera_pos.xyz;
         }
         
-        // Apply inverse model rotation to ray coordinates to rotate the subject
-        let rot_x = uniforms.model_rot_x;
-        let rot_y = uniforms.model_rot_y;
-        let ro_rot = rotate_y(rotate_x(ro, -rot_x), -rot_y);
-        let rd_rot = rotate_y(rotate_x(rd, -rot_x), -rot_y);
+        let ro_rot = (uniforms.inv_model_matrix * vec4f(ro, 1.0)).xyz;
+        let rd_rot = (uniforms.inv_model_matrix * vec4f(rd, 0.0)).xyz;
         
         let L = uniforms.box_size;
         let bounds = intersect_box(ro_rot, rd_rot, vec3f(-L), vec3f(L));
@@ -341,11 +364,12 @@ fn compute_main(@builtin(global_invocation_id) id: vec3u) {
             // March through the volume and accumulate density
             for (var s = 0.0; s < steps_count; s = s + 1.0) {
                 let p3 = ro_rot + rd_rot * t;
-                let p3_zoomed = p3 * uniforms.sampling_zoom;
+                let p3_zoomed = (p3 - uniforms.fractal_pivot.xyz) * uniforms.sampling_zoom + uniforms.fractal_pivot.xyz;
                 let w = eval_temporal(p3_zoomed, 0.0);
-                let pos4 = vec4f(p3_zoomed, w);
+                let w_zoomed = (w - uniforms.fractal_pivot.w) * uniforms.sampling_zoom + uniforms.fractal_pivot.w;
+                let pos4 = vec4f(p3_zoomed, w_zoomed);
                 
-                let f_val = EvaluateFractal(pos4) * get_clip_mask(p3);
+                let f_val = EvaluateFractal(pos4) * get_boolean_mask(p3);
                 
                 // Accumulate density along the ray
                 val = val + f_val * step_size * 0.15;
@@ -478,6 +502,50 @@ fn get_clip_mask(p: vec3f) -> f32 {
     return 1.0 - smoothstep(size - falloff, size, d);
 }
 
+fn get_boolean_mask(p: vec3f) -> f32 {
+    var mask = 1.0;
+    
+    // Evaluate base clip mask first
+    let base_clip = get_clip_mask(p);
+    mask = mask * base_clip;
+    
+    for (var i = 0u; i < uniforms.operator_count; i = i + 1u) {
+        let op = uniforms.operators[i];
+        if (op.shape_type == 0u) {
+            continue;
+        }
+        
+        let local_p = (p - op.center.xyz) / op.scale.xyz;
+        var d = 0.0;
+        if (op.shape_type == 1u) {
+            // Sphere
+            d = length(local_p);
+        } else if (op.shape_type == 2u) {
+            // Box
+            d = max(max(abs(local_p.x), abs(local_p.y)), abs(local_p.z));
+        } else if (op.shape_type == 3u) {
+            // Chamfer Box
+            d = pow(pow(abs(local_p.x), 6.0) + pow(abs(local_p.y), 6.0) + pow(abs(local_p.z), 6.0), 1.0 / 6.0);
+        }
+        
+        let falloff = max(0.0001, op.falloff);
+        let factor = smoothstep(op.size - falloff, op.size, d);
+        
+        if (op.op_type == 0u) {
+            // Intersect (Clip)
+            mask = mask * (1.0 - factor);
+        } else if (op.op_type == 1u) {
+            // Subtract (Hollow/Carve)
+            mask = mask * factor;
+        } else if (op.op_type == 2u) {
+            // Union
+            mask = max(mask, 1.0 - factor);
+        }
+    }
+    
+    return mask;
+}
+
 // --- Pass 1: Grid Voxel Evaluation ---
 @compute @workgroup_size(4, 4, 4)
 fn compute_volume(@builtin(global_invocation_id) id: vec3u) {
@@ -494,13 +562,21 @@ fn compute_volume(@builtin(global_invocation_id) id: vec3u) {
     let grid_f = vec3f(id) / vec3f(f32(size_x - 1u), f32(size_y - 1u), f32(size_z - 1u));
     let pos3 = -L + 2.0 * L * grid_f;
     
-    // Apply sampling zoom to fractal space coordinates
-    let pos3_zoomed = pos3 * uniforms.sampling_zoom;
+    // Calculate voxel distance to grid center
+    let center_vox = vec3f(f32(size_x) / 2.0, f32(size_y) / 2.0, f32(size_z) / 2.0);
+    let dist_vox = distance(vec3f(id), center_vox);
     
-    // Evaluate fractal
-    let w = eval_temporal(pos3_zoomed, 0.0);
-    let pos4 = vec4f(pos3_zoomed, w);
-    let val = EvaluateFractal(pos4) * get_clip_mask(pos3);
+    var val = 0.0;
+    if (dist_vox >= uniforms.hollow_radius) {
+        // Apply sampling zoom and pivot
+        let pos3_zoomed = (pos3 - uniforms.fractal_pivot.xyz) * uniforms.sampling_zoom + uniforms.fractal_pivot.xyz;
+        
+        // Evaluate fractal
+        let w = eval_temporal(pos3_zoomed, 0.0);
+        let w_zoomed = (w - uniforms.fractal_pivot.w) * uniforms.sampling_zoom + uniforms.fractal_pivot.w;
+        let pos4 = vec4f(pos3_zoomed, w_zoomed);
+        val = EvaluateFractal(pos4) * get_boolean_mask(pos3);
+    }
     
     let idx = id.x + id.y * size_x + id.z * size_x * size_y;
     volume[idx] = val;
@@ -658,11 +734,9 @@ fn mc_vertex_main(@builtin(vertex_index) vid: u32) -> MCVertexOutput {
     let v = mc_vertices_render[vid];
     var out: MCVertexOutput;
     
-    // Rotate model coordinates based on model rotation uniforms
-    let rot_x = mc_uniforms.model_rot_x;
-    let rot_y = mc_uniforms.model_rot_y;
-    let rotated_pos = rotate_y(rotate_x(v.position.xyz, rot_x), rot_y);
-    let rotated_normal = rotate_y(rotate_x(v.normal.xyz, rot_x), rot_y);
+    let pos_normalized = v.position.xyz / mc_uniforms.box_size;
+    let rotated_pos = (mc_uniforms.model_matrix * vec4f(pos_normalized, 1.0)).xyz;
+    let rotated_normal = (mc_uniforms.model_matrix * vec4f(v.normal.xyz, 0.0)).xyz;
     
     // Project world position to camera coordinate space manually
     let to_pos = rotated_pos - mc_uniforms.camera_pos.xyz;
@@ -702,7 +776,16 @@ fn mc_vertex_main(@builtin(vertex_index) vid: u32) -> MCVertexOutput {
 @fragment
 fn mc_fragment_main(in: MCVertexOutput) -> @location(0) vec4f {
     // Coloring
-    let t = length(in.world_pos) * render_uniforms.gradient_scale + render_uniforms.gradient_phase;
+    // Coloring source: 0 = Distance from Center, 1 = Surface Curvature
+    var t = 0.0;
+    if (render_uniforms.color_source == 1u) {
+        let dx = dpdx(in.normal);
+        let dy = dpdy(in.normal);
+        let curvature = length(dx) + length(dy);
+        t = curvature * render_uniforms.gradient_scale + render_uniforms.gradient_phase;
+    } else {
+        t = length(in.world_pos) * render_uniforms.gradient_scale + render_uniforms.gradient_phase;
+    }
     let a = render_uniforms.palette_a.xyz;
     let b = render_uniforms.palette_b.xyz;
     let c = render_uniforms.palette_c.xyz;

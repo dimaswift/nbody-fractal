@@ -26,8 +26,8 @@ export class WebGPURenderer {
         this.renderBindGroupLayout = null;
         
         // Array buffers for CPU updates
-        this.uniformsData = new ArrayBuffer(256);
-        this.renderUniformsData = new ArrayBuffer(128);
+        this.uniformsData = new ArrayBuffer(816);
+        this.renderUniformsData = new ArrayBuffer(144);
         this.seedsData = new ArrayBuffer(1024);
         
         this.mcNeedsRecompute = true;
@@ -89,14 +89,14 @@ export class WebGPURenderer {
         // Load shader WGSL
         this.rawShaderSource = await (await fetch("./shader.wgsl")).text();
 
-        // Create GPU Buffers (expanded uniform buffer to 256 bytes)
+        // Create GPU Buffers (expanded uniform buffer to 272 bytes, render uniform to 144)
         this.uniformBuffer = this.device.createBuffer({
-            size: 256,
+            size: 816,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
         this.renderUniformBuffer = this.device.createBuffer({
-            size: 128,
+            size: 144,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
@@ -179,7 +179,7 @@ export class WebGPURenderer {
         // 2. Allocate Vertex Buffer (300,000 vertices * 32 bytes = 9.6 MB)
         this.mcVertexBuffer = this.device.createBuffer({
             size: 300000 * 32,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
         });
 
         // 3. Allocate Atomic Counter Buffer (4 bytes)
@@ -191,7 +191,7 @@ export class WebGPURenderer {
         // 4. Allocate Indirect Draw Buffer (16 bytes)
         this.mcIndirectDrawBuffer = this.device.createBuffer({
             size: 16,
-            usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST
+            usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
         });
 
         // Initialize Indirect buffer with [0, 1, 0, 0]
@@ -368,7 +368,7 @@ export class WebGPURenderer {
             if (this.mcVertexBuffer) this.mcVertexBuffer.destroy();
             this.mcVertexBuffer = this.device.createBuffer({
                 size: vertexSize,
-                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
             });
             needsRebuild = true;
         }
@@ -493,8 +493,40 @@ export class WebGPURenderer {
         u32[59] = data.clipShape;
         f32[60] = data.clipSize;
         f32[61] = data.clipFalloff;
-        f32[62] = data.modelRotX;
-        f32[63] = data.modelRotY;
+        f32.set(data.modelMatrix, 64);
+        f32.set(data.invModelMatrix, 80);
+
+        f32.set(data.fractalPivot, 96);
+        f32[100] = data.hollowRadius;
+
+        u32[104] = data.operators.length;
+        let opBase = 108;
+        for (let i = 0; i < 8; i++) {
+            const start = opBase + i * 12;
+            if (i < data.operators.length) {
+                const op = data.operators[i];
+                u32[start + 0] = op.shapeType;
+                u32[start + 1] = op.opType;
+                f32[start + 2] = op.size;
+                f32[start + 3] = op.falloff;
+                
+                f32[start + 4] = op.center[0];
+                f32[start + 5] = op.center[1];
+                f32[start + 6] = op.center[2];
+                f32[start + 7] = op.center[3];
+                
+                f32[start + 8] = op.scale[0];
+                f32[start + 9] = op.scale[1];
+                f32[start + 10] = op.scale[2];
+                f32[start + 11] = op.scale[3];
+            } else {
+                u32[start + 0] = 0;
+                u32[start + 1] = 0;
+                f32[start + 2] = 0;
+                f32[start + 3] = 0;
+                f32.fill(0, start + 4, start + 12);
+            }
+        }
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformsData);
     }
@@ -522,6 +554,8 @@ export class WebGPURenderer {
         f32.set([...data.paletteB, 0], 20);
         f32.set([...data.paletteC, 0], 24);
         f32.set([...data.paletteD, 0], 28);
+        
+        u32[32] = data.colorSource;
 
         this.device.queue.writeBuffer(this.renderUniformBuffer, 0, this.renderUniformsData);
     }
@@ -653,5 +687,47 @@ export class WebGPURenderer {
             this.runCompute();
         }
         this.draw(isMarchingCubes);
+    }
+
+    // Async GPU vertex buffer readback
+    async getMeshVertices() {
+        if (!this.mcIndirectDrawBuffer || !this.mcVertexBuffer) return null;
+
+        // 1. Read back vertexCount from mcIndirectDrawBuffer (it's the first 4 bytes)
+        const countStaging = this.device.createBuffer({
+            size: 4,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+        });
+        
+        const encoder = this.device.createCommandEncoder();
+        encoder.copyBufferToBuffer(this.mcIndirectDrawBuffer, 0, countStaging, 0, 4);
+        this.device.queue.submit([encoder.finish()]);
+        
+        await countStaging.mapAsync(GPUMapMode.READ);
+        const countArray = new Uint32Array(countStaging.getMappedRange());
+        const vertexCount = countArray[0];
+        countStaging.destroy();
+        
+        if (vertexCount === 0) {
+            return null;
+        }
+        
+        // 2. Read back vertexCount * 32 bytes from mcVertexBuffer
+        const vertexSize = vertexCount * 32;
+        const vertexStaging = this.device.createBuffer({
+            size: vertexSize,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+        });
+        
+        const encoder2 = this.device.createCommandEncoder();
+        encoder2.copyBufferToBuffer(this.mcVertexBuffer, 0, vertexStaging, 0, vertexSize);
+        this.device.queue.submit([encoder2.finish()]);
+        
+        await vertexStaging.mapAsync(GPUMapMode.READ);
+        // Create a copy of the mapped range memory since it gets revoked upon staging.destroy()
+        const vertexData = new Float32Array(vertexStaging.getMappedRange().slice(0));
+        vertexStaging.destroy();
+        
+        return { vertexCount, vertexData };
     }
 }

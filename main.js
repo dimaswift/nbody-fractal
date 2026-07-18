@@ -163,7 +163,7 @@ const state = {
     isFlyMode: false,
     renderMode3D: 1,
     isovalue: 2.05,
-    mcBudget: 500000,
+    mcBudget: 524288,
     mcResX: 252,
     mcResY: 252,
     mcResZ: 252,
@@ -176,6 +176,21 @@ const state = {
     originY: 0.0,
     originZ: 0.0,
     originW: 0.0,
+    
+    // 4D sampling pivot
+    fractalPivotX: 0.0,
+    fractalPivotY: 0.0,
+    fractalPivotZ: 0.0,
+    fractalPivotW: 0.0,
+    colorSource: 0,
+    hollowRadius: 0,
+    operators: [],
+    modelMatrix: new Float32Array([
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    ]),
 
     // 4D Rotation Angles (Radians)
     rotXY: 0.0,
@@ -447,8 +462,11 @@ function triggerRender(forceMcRecompute = true) {
         clipShape: state.clipShape,
         clipSize: state.clipSize,
         clipFalloff: state.clipFalloff,
-        modelRotX: state.rotXY,
-        modelRotY: state.rotYZ,
+        modelMatrix: state.modelMatrix,
+        invModelMatrix: mat4Transpose(new Float32Array(16), state.modelMatrix),
+        fractalPivot: new Float32Array([state.fractalPivotX, state.fractalPivotY, state.fractalPivotZ, state.fractalPivotW]),
+        hollowRadius: state.hollowRadius,
+        operators: state.operators,
     };
 
     // Fragment shader uniforms
@@ -469,6 +487,7 @@ function triggerRender(forceMcRecompute = true) {
         paletteB: palette.b,
         paletteC: palette.c,
         paletteD: palette.d,
+        colorSource: state.colorSource,
     };
 
     // Update GPU buffers
@@ -509,10 +528,264 @@ function triggerColorUpdate() {
         paletteB: palette.b,
         paletteC: palette.c,
         paletteD: palette.d,
+        colorSource: state.colorSource,
     };
 
     renderer.writeRenderUniforms(renderUniforms);
     renderer.draw(state.viewMode === 1 && state.renderMode3D === 1);
+}
+
+// Export current Marching Cubes mesh to binary STL format
+async function triggerSTLExport() {
+    if (!renderer || !renderer.isInitialized) return;
+    
+    const statusBadge = document.getElementById('status-badge');
+    const originalText = statusBadge ? statusBadge.textContent : "WebGPU OK";
+    const originalClass = statusBadge ? statusBadge.className : "performance-badge";
+    const originalColor = statusBadge ? statusBadge.style.color : "";
+
+    if (statusBadge) {
+        statusBadge.textContent = "EXPORTING...";
+        statusBadge.className = "performance-badge";
+        statusBadge.style.color = "yellow";
+    }
+    
+    try {
+        const mesh = await renderer.getMeshVertices();
+        if (!mesh) {
+            alert("Mesh is empty, nothing to export!");
+            if (statusBadge) {
+                statusBadge.textContent = originalText;
+                statusBadge.className = originalClass;
+                statusBadge.style.color = originalColor;
+            }
+            return;
+        }
+        
+        const { vertexCount, vertexData } = mesh;
+        const triangleCount = Math.floor(vertexCount / 3);
+        
+        // Binary STL buffer size
+        const bufferSize = 84 + triangleCount * 50;
+        const buffer = new ArrayBuffer(bufferSize);
+        const view = new DataView(buffer);
+        
+        // Header (80 bytes) - write empty space
+        for (let i = 0; i < 80; i++) {
+            view.setUint8(i, 0);
+        }
+        
+        // Triangle count (4 bytes at offset 80)
+        view.setUint32(80, triangleCount, true); // little endian!
+        
+        let offset = 84;
+        
+        // Each vertex is 8 floats: pos.x, pos.y, pos.z, pos.w, norm.x, norm.y, norm.z, norm.w
+        // Float array size: vertexCount * 8
+        for (let t = 0; t < triangleCount; t++) {
+            const v0_idx = t * 3 * 8;
+            const v1_idx = (t * 3 + 1) * 8;
+            const v2_idx = (t * 3 + 2) * 8;
+            
+            // Average the normal from the 3 vertices
+            const nx = (vertexData[v0_idx + 4] + vertexData[v1_idx + 4] + vertexData[v2_idx + 4]) / 3;
+            const ny = (vertexData[v0_idx + 5] + vertexData[v1_idx + 5] + vertexData[v2_idx + 5]) / 3;
+            const nz = (vertexData[v0_idx + 6] + vertexData[v1_idx + 6] + vertexData[v2_idx + 6]) / 3;
+            
+            // Normal (3 floats)
+            view.setFloat32(offset, nx, true);
+            view.setFloat32(offset + 4, ny, true);
+            view.setFloat32(offset + 8, nz, true);
+            offset += 12;
+            
+            // Vertex 1 (3 floats)
+            view.setFloat32(offset, vertexData[v0_idx], true);
+            view.setFloat32(offset + 4, vertexData[v0_idx + 1], true);
+            view.setFloat32(offset + 8, vertexData[v0_idx + 2], true);
+            offset += 12;
+            
+            // Vertex 2 (3 floats)
+            view.setFloat32(offset, vertexData[v1_idx], true);
+            view.setFloat32(offset + 4, vertexData[v1_idx + 1], true);
+            view.setFloat32(offset + 8, vertexData[v1_idx + 2], true);
+            offset += 12;
+            
+            // Vertex 3 (3 floats)
+            view.setFloat32(offset, vertexData[v2_idx], true);
+            view.setFloat32(offset + 4, vertexData[v2_idx + 1], true);
+            view.setFloat32(offset + 8, vertexData[v2_idx + 2], true);
+            offset += 12;
+            
+            // Attribute byte count (2 bytes)
+            view.setUint16(offset, 0, true);
+            offset += 2;
+        }
+        
+        const blob = new Blob([buffer], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `nbody_fractal_mesh_${Date.now()}.stl`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        if (statusBadge) {
+            statusBadge.textContent = originalText;
+            statusBadge.className = originalClass;
+            statusBadge.style.color = originalColor;
+        }
+        
+    } catch (err) {
+        console.error(err);
+        alert("Error exporting STL: " + err.message);
+        if (statusBadge) {
+            statusBadge.textContent = "ERROR";
+            statusBadge.style.color = "red";
+        }
+    }
+}
+
+// Render the CSG operators panel items dynamically
+function renderOperatorsList() {
+    const list = document.getElementById('operators-list');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    if (!Array.isArray(state.operators)) {
+        state.operators = [];
+    }
+    
+    state.operators.forEach((op, idx) => {
+        const item = document.createElement('div');
+        item.style.display = 'flex';
+        item.style.flexDirection = 'column';
+        item.style.gap = '8px';
+        item.style.padding = '8px';
+        item.style.border = '1px solid #444';
+        item.style.borderRadius = '4px';
+        item.style.background = 'rgba(255, 255, 255, 0.05)';
+        
+        item.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #444; padding-bottom: 4px; margin-bottom: 4px;">
+                <span style="font-size: 0.8rem; font-weight: bold; color: #4b8df8;">Operator #${idx + 1}</span>
+                <button class="btn btn-secondary btn-remove-op" data-index="${idx}" style="padding: 2px 6px; font-size: 0.7rem; background-color: #d9534f; border: none; border-radius: 3px; cursor: pointer; color: white;">Remove</button>
+            </div>
+            
+            <div style="display: flex; gap: 8px;">
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 0.65rem; color: #888;">Shape Type</span>
+                    <select class="op-select-shape" data-index="${idx}" style="background: #222; color: #fff; border: 1px solid #444; padding: 4px; font-size: 0.75rem; border-radius: 3px;">
+                        <option value="1" ${op.shapeType === 1 ? 'selected' : ''}>Sphere</option>
+                        <option value="2" ${op.shapeType === 2 ? 'selected' : ''}>Box</option>
+                        <option value="3" ${op.shapeType === 3 ? 'selected' : ''}>Chamfer Box</option>
+                    </select>
+                </div>
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 0.65rem; color: #888;">Operation</span>
+                    <select class="op-select-op" data-index="${idx}" style="background: #222; color: #fff; border: 1px solid #444; padding: 4px; font-size: 0.75rem; border-radius: 3px;">
+                        <option value="0" ${op.opType === 0 ? 'selected' : ''}>Intersect (Clip)</option>
+                        <option value="1" ${op.opType === 1 ? 'selected' : ''}>Subtract (Hollow)</option>
+                        <option value="2" ${op.opType === 2 ? 'selected' : ''}>Union</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 8px;">
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 0.65rem; color: #888;">Size (${op.size.toFixed(2)})</span>
+                    <input type="range" class="op-slider-size" data-index="${idx}" min="0.05" max="4.00" step="0.05" value="${op.size}" style="width: 100%;">
+                </div>
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 0.65rem; color: #888;">Falloff (${op.falloff.toFixed(2)})</span>
+                    <input type="range" class="op-slider-falloff" data-index="${idx}" min="0.01" max="1.00" step="0.01" value="${op.falloff}" style="width: 100%;">
+                </div>
+            </div>
+            
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+                <span style="font-size: 0.65rem; color: #888;">Center (X / Y / Z)</span>
+                <div style="display: flex; gap: 4px;">
+                    <input type="number" class="op-input-center-x" data-index="${idx}" step="0.05" value="${op.center[0]}" style="flex: 1; padding: 4px; border-radius: 3px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.75rem;">
+                    <input type="number" class="op-input-center-y" data-index="${idx}" step="0.05" value="${op.center[1]}" style="flex: 1; padding: 4px; border-radius: 3px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.75rem;">
+                    <input type="number" class="op-input-center-z" data-index="${idx}" step="0.05" value="${op.center[2]}" style="flex: 1; padding: 4px; border-radius: 3px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.75rem;">
+                </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+                <span style="font-size: 0.65rem; color: #888;">Scale (X / Y / Z)</span>
+                <div style="display: flex; gap: 4px;">
+                    <input type="number" class="op-input-scale-x" data-index="${idx}" step="0.05" value="${op.scale[0]}" style="flex: 1; padding: 4px; border-radius: 3px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.75rem;">
+                    <input type="number" class="op-input-scale-y" data-index="${idx}" step="0.05" value="${op.scale[1]}" style="flex: 1; padding: 4px; border-radius: 3px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.75rem;">
+                    <input type="number" class="op-input-scale-z" data-index="${idx}" step="0.05" value="${op.scale[2]}" style="flex: 1; padding: 4px; border-radius: 3px; background: #222; color: #fff; border: 1px solid #444; font-size: 0.75rem;">
+                </div>
+            </div>
+        `;
+        list.appendChild(item);
+    });
+
+    // Bind event listeners for dynamic controls
+    list.querySelectorAll('.btn-remove-op').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            state.operators.splice(idx, 1);
+            renderOperatorsList();
+            triggerRender();
+        });
+    });
+
+    list.querySelectorAll('.op-select-shape').forEach(sel => {
+        sel.addEventListener('change', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            state.operators[idx].shapeType = parseInt(e.target.value);
+            triggerRender();
+        });
+    });
+
+    list.querySelectorAll('.op-select-op').forEach(sel => {
+        sel.addEventListener('change', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            state.operators[idx].opType = parseInt(e.target.value);
+            triggerRender();
+        });
+    });
+
+    list.querySelectorAll('.op-slider-size').forEach(slider => {
+        slider.addEventListener('input', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            state.operators[idx].size = parseFloat(e.target.value);
+            const parent = e.target.parentElement;
+            parent.querySelector('span').textContent = `Size (${state.operators[idx].size.toFixed(2)})`;
+            triggerRender();
+        });
+    });
+
+    list.querySelectorAll('.op-slider-falloff').forEach(slider => {
+        slider.addEventListener('input', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            state.operators[idx].falloff = parseFloat(e.target.value);
+            const parent = e.target.parentElement;
+            parent.querySelector('span').textContent = `Falloff (${state.operators[idx].falloff.toFixed(2)})`;
+            triggerRender();
+        });
+    });
+
+    const bindCoordInput = (selector, centerOrScale, coordIdx) => {
+        list.querySelectorAll(selector).forEach(inp => {
+            inp.addEventListener('change', (e) => {
+                const idx = parseInt(e.target.getAttribute('data-index'));
+                state.operators[idx][centerOrScale][coordIdx] = parseFloat(e.target.value) || 0.0;
+                triggerRender();
+            });
+        });
+    };
+
+    bindCoordInput('.op-input-center-x', 'center', 0);
+    bindCoordInput('.op-input-center-y', 'center', 1);
+    bindCoordInput('.op-input-center-z', 'center', 2);
+    bindCoordInput('.op-input-scale-x', 'scale', 0);
+    bindCoordInput('.op-input-scale-y', 'scale', 1);
+    bindCoordInput('.op-input-scale-z', 'scale', 2);
 }
 
 // Generate dynamic color preview bar on UI
@@ -697,19 +970,25 @@ function initCanvasMouseEvents(canvas) {
                 triggerRender(false);
             } else {
                 // --- 3D Volumetric Mode: Rotate Slice Plane Spatially ---
-                state.rotXY += dx * 0.005;
-                state.rotYZ += dy * 0.005;
-
+                const dYaw = dx * 0.005;
+                const dPitch = dy * 0.005;
+                
+                applyIncrementalRotation(dYaw, dPitch);
+                
+                state.rotXY += dYaw;
+                state.rotYZ += dPitch;
+                
                 if (state.rotXY > Math.PI) state.rotXY -= 2 * Math.PI;
                 if (state.rotXY < -Math.PI) state.rotXY += 2 * Math.PI;
                 if (state.rotYZ > Math.PI) state.rotYZ -= 2 * Math.PI;
                 if (state.rotYZ < -Math.PI) state.rotYZ += 2 * Math.PI;
-
-                // Update UI sliders for visual feedback
-                document.getElementById('slider-rot-xy').value = state.rotXY.toFixed(2);
-                document.getElementById('slider-rot-yz').value = state.rotYZ.toFixed(2);
                 
-                updateCameraVectors(); // camera revolves to stay locked facing slice
+                const sliderXY = document.getElementById('slider-rot-xy');
+                const sliderYZ = document.getElementById('slider-rot-yz');
+                if (sliderXY) sliderXY.value = state.rotXY.toFixed(2);
+                if (sliderYZ) sliderYZ.value = state.rotYZ.toFixed(2);
+                
+                updateCameraVectors();
                 triggerRender(false);
             }
         }
@@ -745,10 +1024,11 @@ function initCanvasMouseEvents(canvas) {
 
 function update3DPanelVisibility() {
     const isMC = state.renderMode3D === 1;
-    const dispMC = isMC ? 'flex' : 'none';
-    const dispVol = !isMC ? 'flex' : 'none';
+    const is3D = state.viewMode === 1;
+    const dispMC = (is3D && isMC) ? 'flex' : 'none';
+    const dispVol = (is3D && !isMC) ? 'flex' : 'none';
 
-    const rows = ['row-isovalue', 'row-mc-budget', 'row-mc-res-x', 'row-mc-res-y', 'row-mc-res-z', 'row-mc-invert-normals', 'row-mc-presets'];
+    const rows = ['row-isovalue', 'row-mc-budget', 'row-mc-res-x', 'row-mc-res-y', 'row-mc-res-z', 'row-mc-invert-normals', 'row-mc-presets', 'row-mc-boolean'];
     rows.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = dispMC;
@@ -757,6 +1037,11 @@ function update3DPanelVisibility() {
     const rayStepsRow = document.getElementById('row-ray-steps');
     if (rayStepsRow) {
         rayStepsRow.style.display = dispVol;
+    }
+
+    const btnExportStl = document.getElementById('btn-export-stl');
+    if (btnExportStl) {
+        btnExportStl.style.display = (is3D && isMC) ? 'inline-block' : 'none';
     }
 }
 
@@ -810,8 +1095,33 @@ function bindUIEventListeners() {
             });
         }
     };
-    updateRotVal('rotXY', 'slider-rot-xy');
-    updateRotVal('rotYZ', 'slider-rot-yz');
+    const sliderXY = document.getElementById('slider-rot-xy');
+    if (sliderXY) {
+        sliderXY.addEventListener('input', (e) => {
+            const newVal = parseFloat(e.target.value);
+            let delta = newVal - state.rotXY;
+            if (delta > Math.PI) delta -= 2 * Math.PI;
+            if (delta < -Math.PI) delta += 2 * Math.PI;
+            
+            applyIncrementalRotation(delta, 0.0);
+            state.rotXY = newVal;
+            triggerRender();
+        });
+    }
+
+    const sliderYZ = document.getElementById('slider-rot-yz');
+    if (sliderYZ) {
+        sliderYZ.addEventListener('input', (e) => {
+            const newVal = parseFloat(e.target.value);
+            let delta = newVal - state.rotYZ;
+            if (delta > Math.PI) delta -= 2 * Math.PI;
+            if (delta < -Math.PI) delta += 2 * Math.PI;
+            
+            applyIncrementalRotation(0.0, delta);
+            state.rotYZ = newVal;
+            triggerRender();
+        });
+    }
     updateRotVal('rotXZ', 'slider-rot-xz');
     updateRotVal('rotXW', 'slider-rot-xw');
     updateRotVal('rotYW', 'slider-rot-yw');
@@ -1018,6 +1328,55 @@ function bindUIEventListeners() {
         });
     }
 
+    // Rendering Volume Size
+    const sliderMcBoxSize = document.getElementById('slider-mc-box-size');
+    const labelMcBoxSize = document.getElementById('val-mc-box-size');
+    if (sliderMcBoxSize) {
+        sliderMcBoxSize.addEventListener('input', (e) => {
+            state.boxSize = parseFloat(e.target.value);
+            if (labelMcBoxSize) {
+                labelMcBoxSize.textContent = state.boxSize.toFixed(2);
+            }
+            triggerRender();
+        });
+    }
+
+    // CSG Boolean Shape Operators Add button listener
+    const btnAddOp = document.getElementById('btn-add-op');
+    if (btnAddOp) {
+        btnAddOp.addEventListener('click', () => {
+            if (state.operators.length >= 8) {
+                alert("Maximum 8 boolean operators allowed.");
+                return;
+            }
+            state.operators.push({
+                shapeType: 1, // Sphere default
+                opType: 1,    // Subtract default
+                size: 0.5,
+                falloff: 0.1,
+                center: [0.0, 0.0, 0.0, 0.0],
+                scale: [1.0, 1.0, 1.0, 1.0]
+            });
+            renderOperatorsList();
+            triggerRender();
+        });
+    }
+
+    // Fractal Sampling Pivot
+    const bindPivotInput = (id, stateProp) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', (e) => {
+                state[stateProp] = parseFloat(e.target.value) || 0.0;
+                triggerRender();
+            });
+        }
+    };
+    bindPivotInput('input-pivot-x', 'fractalPivotX');
+    bindPivotInput('input-pivot-y', 'fractalPivotY');
+    bindPivotInput('input-pivot-z', 'fractalPivotZ');
+    bindPivotInput('input-pivot-w', 'fractalPivotW');
+
     // Clipping Pass Controls
     const selectMcClipShape = document.getElementById('select-mc-clip-shape');
     if (selectMcClipShape) {
@@ -1148,6 +1507,7 @@ function bindUIEventListeners() {
             // Show/hide left slice options
             document.getElementById('section-slice').style.display = 'flex';
             document.getElementById('section-3d-raymarching').style.display = 'none';
+            update3DPanelVisibility();
             triggerRender();
         });
 
@@ -1158,6 +1518,7 @@ function bindUIEventListeners() {
             // Hide slice origin panel as raymarching handles volume bounds
             document.getElementById('section-slice').style.display = 'none';
             document.getElementById('section-3d-raymarching').style.display = 'flex';
+            update3DPanelVisibility();
             updateCameraVectors();
             triggerRender();
         });
@@ -1169,6 +1530,14 @@ function bindUIEventListeners() {
         colorModeSelect.addEventListener('change', (e) => {
             state.colorMode = parseInt(e.target.value);
             updateUIElementsVisibility();
+            triggerColorUpdate();
+        });
+    }
+
+    const colorSourceSelect = document.getElementById('select-color-source');
+    if (colorSourceSelect) {
+        colorSourceSelect.addEventListener('change', (e) => {
+            state.colorSource = parseInt(e.target.value);
             triggerColorUpdate();
         });
     }
@@ -1231,6 +1600,7 @@ function bindUIEventListeners() {
         state.rotXW = 0;
         state.rotYW = 0;
         state.rotZW = 0;
+        state.modelMatrix = mat4CreateIdentity();
         
         // Reset slider UI elements
         document.getElementById('slider-zoom').value = '1.50';
@@ -1272,6 +1642,12 @@ function bindUIEventListeners() {
         link.href = renderer.canvas.toDataURL('image/png');
         link.click();
     });
+
+    // Binary STL mesh exporter
+    const btnExportStl = document.getElementById('btn-export-stl');
+    if (btnExportStl) {
+        btnExportStl.addEventListener('click', triggerSTLExport);
+    }
 
     // Configuration Manager listeners
     const btnSave = document.getElementById('btn-save-config');
@@ -1493,7 +1869,8 @@ const CONFIG_KEYS = [
     'camTheta', 'camPhi', 'camRadius', 'boxSize', 
     'steps', 'dt', 'soften', 'escapeR2', 'density', 'coreVelX', 'coreVelY', 'metricMode', 
     'temporalMode', 'temporalScale', 'temporalOffset', 'temporalParam', 
-    'colorMode', 'paletteName', 'gradientScale', 'gradientPhase', 'zebraFrequency', 'zebraSharpness', 'reliefScale', 'specular'
+    'colorMode', 'paletteName', 'gradientScale', 'gradientPhase', 'zebraFrequency', 'zebraSharpness', 'reliefScale', 'specular',
+    'fractalPivotX', 'fractalPivotY', 'fractalPivotZ', 'fractalPivotW', 'colorSource', 'hollowRadius', 'operators', 'modelMatrix'
 ];
 
 const LOCAL_STORAGE_KEY = 'nbody_fractal_explorer_configs';
@@ -1571,7 +1948,11 @@ function deleteConfig(name) {
 function exportConfigToJSON() {
     const configState = {};
     CONFIG_KEYS.forEach(key => {
-        configState[key] = state[key];
+        if (state[key] instanceof Float32Array) {
+            configState[key] = Array.from(state[key]);
+        } else {
+            configState[key] = state[key];
+        }
     });
     
     const configData = {
@@ -1611,7 +1992,17 @@ function applyConfiguration(config) {
     
     if (config.state) {
         for (const key in config.state) {
-            state[key] = config.state[key];
+            if (key === 'modelMatrix' && Array.isArray(config.state[key])) {
+                state.modelMatrix = new Float32Array(config.state[key]);
+            } else {
+                state[key] = config.state[key];
+            }
+        }
+        if (!state.operators) {
+            state.operators = [];
+        }
+        if (!state.modelMatrix || !(state.modelMatrix instanceof Float32Array)) {
+            state.modelMatrix = mat4CreateIdentity();
         }
     }
     
@@ -1719,7 +2110,23 @@ function syncUIFromState() {
     setVal('slider-ray-steps', state.raySteps);
     setText('val-ray-steps', state.raySteps.toFixed(0));
 
+    setVal('slider-mc-box-size', state.boxSize);
+    setText('val-mc-box-size', state.boxSize.toFixed(2));
+    renderOperatorsList();
+    setVal('input-pivot-x', state.fractalPivotX.toFixed(2));
+    setVal('input-pivot-y', state.fractalPivotY.toFixed(2));
+    setVal('input-pivot-z', state.fractalPivotZ.toFixed(2));
+    setVal('input-pivot-w', state.fractalPivotW.toFixed(2));
+
+    setVal('slider-rot-xy', state.rotXY.toFixed(2));
+    setVal('slider-rot-yz', state.rotYZ.toFixed(2));
+    setVal('slider-rot-xz', state.rotXZ.toFixed(2));
+    setVal('slider-rot-xw', state.rotXW.toFixed(2));
+    setVal('slider-rot-yw', state.rotYW.toFixed(2));
+    setVal('slider-rot-zw', state.rotZW.toFixed(2));
+
     setVal('select-color-mode', state.colorMode);
+    setVal('select-color-source', state.colorSource);
     setVal('select-palette', state.paletteName);
     setVal('slider-grad-scale', state.gradientScale);
     setText('val-grad-scale', state.gradientScale.toFixed(2));
@@ -1804,6 +2211,89 @@ async function main() {
         document.getElementById('status-badge').className = "performance-badge";
         document.getElementById('status-badge').style.color = "red";
     }
+}
+
+// mat4 utilities for viewport-aligned incremental rotation accumulation
+function mat4CreateIdentity() {
+    return new Float32Array([
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    ]);
+}
+
+function mat4Multiply(out, a, b) {
+    const a00 = a[0],  a01 = a[1],  a02 = a[2],  a03 = a[3];
+    const a10 = a[4],  a11 = a[5],  a12 = a[6],  a13 = a[7];
+    const a20 = a[8],  a21 = a[9],  a22 = a[10], a23 = a[11];
+    const a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+
+    let b0  = b[0],  b1  = b[1],  b2  = b[2],  b3  = b[3];
+    out[0]  = b0*a00 + b1*a10 + b2*a20 + b3*a30;
+    out[1]  = b0*a01 + b1*a11 + b2*a21 + b3*a31;
+    out[2]  = b0*a02 + b1*a12 + b2*a22 + b3*a32;
+    out[3]  = b0*a03 + b1*a13 + b2*a23 + b3*a33;
+
+    b0 = b[4];  b1 = b[5];  b2 = b[6];  b3 = b[7];
+    out[4]  = b0*a00 + b1*a10 + b2*a20 + b3*a30;
+    out[5]  = b0*a01 + b1*a11 + b2*a21 + b3*a31;
+    out[6]  = b0*a02 + b1*a12 + b2*a22 + b3*a32;
+    out[7]  = b0*a03 + b1*a13 + b2*a23 + b3*a33;
+
+    b0 = b[8];  b1 = b[9];  b2 = b[10]; b3 = b[11];
+    out[8]  = b0*a00 + b1*a10 + b2*a20 + b3*a30;
+    out[9]  = b0*a01 + b1*a11 + b2*a21 + b3*a31;
+    out[10] = b0*a02 + b1*a12 + b2*a22 + b3*a32;
+    out[11] = b0*a03 + b1*a13 + b2*a23 + b3*a33;
+
+    b0 = b[12]; b1 = b[13]; b2 = b[14]; b3 = b[15];
+    out[12] = b0*a00 + b1*a10 + b2*a20 + b3*a30;
+    out[13] = b0*a01 + b1*a11 + b2*a21 + b3*a31;
+    out[14] = b0*a02 + b1*a12 + b2*a22 + b3*a32;
+    out[15] = b0*a03 + b1*a13 + b2*a23 + b3*a33;
+    return out;
+}
+
+function mat4FromRotationX(out, rad) {
+    const s = Math.sin(rad);
+    const c = Math.cos(rad);
+    out[0] = 1; out[1] = 0; out[2] = 0;  out[3] = 0;
+    out[4] = 0; out[5] = c; out[6] = s;  out[7] = 0;
+    out[8] = 0; out[9] = -s;out[10] = c; out[11] = 0;
+    out[12] = 0;out[13] = 0;out[14] = 0; out[15] = 1;
+    return out;
+}
+
+function mat4FromRotationY(out, rad) {
+    const s = Math.sin(rad);
+    const c = Math.cos(rad);
+    out[0] = c; out[1] = 0; out[2] = -s; out[3] = 0;
+    out[4] = 0; out[5] = 1; out[6] = 0;  out[7] = 0;
+    out[8] = s; out[9] = 0; out[10] = c; out[11] = 0;
+    out[12] = 0;out[13] = 0;out[14] = 0; out[15] = 1;
+    return out;
+}
+
+function mat4Transpose(out, a) {
+    out[0] = a[0];  out[1] = a[4];  out[2] = a[8];  out[3] = a[12];
+    out[4] = a[1];  out[5] = a[5];  out[6] = a[9];  out[7] = a[13];
+    out[8] = a[2];  out[9] = a[6];  out[10] = a[10];out[11] = a[14];
+    out[12] = a[3]; out[13] = a[7]; out[14] = a[11];out[15] = a[15];
+    return out;
+}
+
+function applyIncrementalRotation(dx, dy) {
+    const tempX = new Float32Array(16);
+    const tempY = new Float32Array(16);
+    const tempInc = new Float32Array(16);
+    const nextMatrix = new Float32Array(16);
+    
+    mat4FromRotationX(tempX, dy);
+    mat4FromRotationY(tempY, dx);
+    mat4Multiply(tempInc, tempX, tempY);
+    mat4Multiply(nextMatrix, tempInc, state.modelMatrix);
+    state.modelMatrix = nextMatrix;
 }
 
 window.addEventListener('DOMContentLoaded', main);
