@@ -193,7 +193,12 @@ function run(preview: boolean) {
   });
 }
 
-/** Coarse box pass over the last known bounds — fast enough to run per drag. */
+/** Coarse box pass over the last known bounds — fast enough to run per drag.
+ *
+ *  Fidelity matters: the preview cell is always the full cell size × 2^k, so
+ *  preview lattice planes are a subset of the full lattice — the coarse mesh
+ *  agrees with the final one far better than an arbitrary cell size would.
+ *  k is the smallest power that fits the bounds into the quality's brick cap. */
 function previewSampling(s: SamplingParams): SamplingParams {
   let center: Vec3;
   let half: number;
@@ -209,6 +214,7 @@ function previewSampling(s: SamplingParams): SamplingParams {
         lastBounds.max[1] - lastBounds.min[1],
         lastBounds.max[2] - lastBounds.min[2]
       ) / 2;
+    half *= 1.1; // margin: a dragged operator may push the surface slightly out
   } else if (s.mode === 'box') {
     center = [...s.boxCenter] as Vec3;
     half = s.boxHalfExtent;
@@ -218,17 +224,27 @@ function previewSampling(s: SamplingParams): SamplingParams {
   }
   half = Math.max(half, s.cellSize * BRICK_CELLS);
 
-  // ~2 bricks per axis => 64^3 cells for the whole preview
-  const cell = (2 * half) / (2 * BRICK_CELLS);
+  const quality = useStore.getState().previewQuality;
+  const brickCap = quality === 'high' ? 216 : quality === 'balanced' ? 64 : 8;
+
+  let k = 1;
+  while (k < 6) {
+    const bricksPerAxis = Math.ceil((2 * half) / (s.cellSize * (1 << k) * BRICK_CELLS)) + 1;
+    if (bricksPerAxis ** 3 <= brickCap) break;
+    k++;
+  }
+  const cell = s.cellSize * (1 << k);
+
   return {
     ...s,
     mode: 'box',
     boxCenter: center,
     boxHalfExtent: half,
     cellSize: cell,
-    maxBricks: 64,
-    vertexBudget: 524288,
+    maxBricks: brickCap * 2,
+    vertexBudget: 786432,
     refineMode: Math.min(s.refineMode, 1),
+    removeFloaters: 'off',
   };
 }
 

@@ -54,6 +54,18 @@ indices, so seams between bricks are bitwise watertight).
 Caps: `maxBricks`, `vertexBudget`. Progressive: each wave's new vertices stream
 into the viewport immediately; refinement runs once at the end.
 
+**Floater removal** (`Sampling → Floaters`): connected-component analysis over
+the unrefined triangle soup — shared MC vertices are bitwise-exact (integer
+lattice + deterministic field), so components are found by exact float-bit
+matching with union-find, no epsilons. Modes: drop pieces < 1% of the largest
+component (default) or keep only the largest. Runs before refinement; the
+compacted mesh is re-uploaded and refined.
+
+**Drag previews** use the full cell size × 2^k (preview lattice planes are a
+subset of the full lattice, so the coarse mesh tracks the final topology), with
+k chosen to fit a brick cap set by `Drag preview` quality (fast / balanced /
+high).
+
 Known granularity limit: two islands can share one brick (bricks are
 `32 × cellSize` wide), in which case the foreign island's geometry inside that
 brick is captured too. Shrinking the cell size shrinks bricks proportionally.

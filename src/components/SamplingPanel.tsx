@@ -7,6 +7,7 @@ export function SamplingPanel() {
   const sampling = useStore((s) => s.sampling);
   const setSampling = useStore((s) => s.setSampling);
   const autoExtract = useStore((s) => s.autoExtract);
+  const previewQuality = useStore((s) => s.previewQuality);
   const specialize = useStore((s) => s.specialize);
   const set = useStore((s) => s.set);
   const select = useStore((s) => s.select);
@@ -112,8 +113,21 @@ export function SamplingPanel() {
             [1572864, '1.57 M'],
             [3145728, '3.15 M'],
             [6291456, '6.29 M'],
+            [12582912, '12.6 M (400 MB)'],
+            [25165824, '25.2 M (800 MB)'],
           ]}
           onChange={(v) => setSampling({ vertexBudget: v })}
+        />
+      </Row>
+      <Row label="Floaters">
+        <SelectField
+          value={sampling.removeFloaters}
+          options={[
+            ['off', 'Keep everything'],
+            ['tiny', 'Drop < 1% of largest'],
+            ['largest', 'Keep largest only'],
+          ]}
+          onChange={(v) => setSampling({ removeFloaters: v })}
         />
       </Row>
       <Row label="Refinement">
@@ -136,6 +150,17 @@ export function SamplingPanel() {
         onChange={(v) => setSampling({ normalDetail: v })}
       />
       <Toggle label="Invert normals" checked={sampling.invertNormals} onChange={(v) => setSampling({ invertNormals: v })} />
+      <Row label="Drag preview">
+        <SelectField
+          value={previewQuality}
+          options={[
+            ['fast', 'Fast (coarse)'],
+            ['balanced', 'Balanced'],
+            ['high', 'High (slower drags)'],
+          ]}
+          onChange={(v) => set({ previewQuality: v })}
+        />
+      </Row>
       <Toggle label="Auto re-extract" checked={autoExtract} onChange={(v) => set({ autoExtract: v })} />
       <Toggle
         label="Specialized shader"

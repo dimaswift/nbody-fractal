@@ -70,6 +70,8 @@ export interface AppState {
   isInteracting: boolean;
   showOperators: boolean;
   showSeeds: boolean;
+  /** drag-preview resolution (does not affect the final extraction) */
+  previewQuality: 'fast' | 'balanced' | 'high';
 
   phase: ExtractionPhase;
   stats: ExtractionStats | null;
@@ -126,7 +128,7 @@ export const defaultField = (): FieldParams => ({
   temporalScale: -0.35,
   temporalOffset: 0.05,
   temporalParam: 1.55,
-  coreVelocity: [-0.3, 0.6, 0, 0],
+  coreVelocity: [0, 0, 0, 0],
   samplingZoom: 0.75,
   fractalPivot: [0, 0, 0, 0],
   operators: [
@@ -158,6 +160,7 @@ export const defaultSampling = (): SamplingParams => ({
   boxCenter: [0, 0, 0],
   growSeed: [0, 0, 0],
   searchRadius: 2.0,
+  removeFloaters: 'tiny',
 });
 
 export const defaultShading = (): ShadingParams => ({
@@ -206,6 +209,7 @@ export const useStore = create<AppState>((set) => ({
   isInteracting: false,
   showOperators: true,
   showSeeds: true,
+  previewQuality: 'balanced',
 
   phase: 'idle',
   stats: null,

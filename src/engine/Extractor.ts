@@ -23,6 +23,7 @@ import {
   type ExtractionStats,
   type Vec3,
 } from './types';
+import { filterFloaters } from './floaters';
 
 interface BrickCoord {
   x: number;
@@ -94,11 +95,13 @@ export class Extractor {
       surfaceFound: true,
       elapsedMs: 0,
       bounds: null,
+      floatersRemoved: 0,
+      componentsTotal: 0,
     };
 
     const cell = Math.max(1e-5, sampling.cellSize);
     const brickWorld = cell * BRICK_CELLS;
-    const maxVertices = Math.max(3, sampling.vertexBudget);
+    const maxVertices = Math.min(Math.max(3, sampling.vertexBudget), engine.maxVertexCapacity());
 
     engine.ensureVertexCapacity(maxVertices);
     engine.writeSeeds(field);
@@ -272,6 +275,30 @@ export class Extractor {
     stats.bricksQueued = queue.length;
     stats.vertexCount = readVertices;
     stats.bounds = finiteBounds(bounds);
+
+    // ------------------------------------------------------------------
+    // Floater removal (exact connectivity on the unrefined lattice mesh)
+    // ------------------------------------------------------------------
+    if (sampling.removeFloaters !== 'off' && readVertices > 0) {
+      cb.onPhase?.('filtering');
+      // Yield so the phase update paints before the CPU-heavy pass
+      await new Promise((r) => setTimeout(r, 0));
+      if (isCancelled()) return this.finish(cb, null, stats, t0, 'cancelled');
+
+      const res = filterFloaters(meshData, readVertices, sampling.removeFloaters);
+      stats.componentsTotal = res.totalComponents;
+      stats.floatersRemoved = res.removedComponents;
+      if (res.removedVertices > 0) {
+        meshData = res.vertexData;
+        readVertices = res.vertexCount;
+        stats.vertexCount = readVertices;
+        engine.writeVertexData(res.vertexData, res.vertexCount);
+        cb.onMesh?.(
+          { vertexData: meshData, vertexCount: readVertices, refined: false },
+          { ...stats, elapsedMs: performance.now() - t0 }
+        );
+      }
+    }
 
     // ------------------------------------------------------------------
     // Refinement + final readback

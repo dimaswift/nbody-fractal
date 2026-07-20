@@ -15,6 +15,7 @@ export enum ShapeType {
   ChamferBox = 3,
   Cylinder = 4,
   Slab = 5,
+  Capsule = 6,
 }
 
 export enum OpType {
@@ -82,6 +83,9 @@ export interface SamplingParams {
   growSeed: Vec3;
   /** flood mode: max distance from growSeed to search for the surface */
   searchRadius: number;
+  /** drop detached pieces: 'tiny' removes components < 1% of the largest,
+   *  'largest' keeps only the biggest connected component */
+  removeFloaters: 'off' | 'tiny' | 'largest';
 }
 
 export interface ExtractionRequest {
@@ -110,12 +114,16 @@ export interface ExtractionStats {
   elapsedMs: number;
   /** world-space AABB of emitted bricks */
   bounds: { min: Vec3; max: Vec3 } | null;
+  /** floater filtering results (0 when off / nothing removed) */
+  floatersRemoved: number;
+  componentsTotal: number;
 }
 
 export type ExtractionPhase =
   | 'idle'
   | 'searching'
   | 'growing'
+  | 'filtering'
   | 'refining'
   | 'reading'
   | 'done'

@@ -9,6 +9,7 @@ const SHAPE_OPTIONS: [number, string][] = [
   [ShapeType.Box, 'Box'],
   [ShapeType.ChamferBox, 'Chamfer box'],
   [ShapeType.Cylinder, 'Cylinder'],
+  [ShapeType.Capsule, 'Capsule'],
   [ShapeType.Slab, 'Slab'],
 ];
 

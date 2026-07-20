@@ -296,7 +296,7 @@ fn eval_temporal(p3: vec3f, w_slice: f32) -> f32 {
 
 // --- Boolean shape operators (soft masks, order-sensitive fold) ---
 
-fn shape_distance(shape_type: u32, lp: vec3f) -> f32 {
+fn shape_distance(shape_type: u32, lp: vec3f, size: f32) -> f32 {
     if (shape_type == 1u) {
         // Sphere
         return length(lp);
@@ -312,6 +312,12 @@ fn shape_distance(shape_type: u32, lp: vec3f) -> f32 {
     } else if (shape_type == 5u) {
         // Slab: |y| < size
         return abs(lp.y);
+    } else if (shape_type == 6u) {
+        // Capsule along local Y: distance to a core segment of half-length
+        // `size`; the boundary sits `size` further out (total 4*size tall,
+        // 2*size wide — stretch with the scale gizmo).
+        let q = vec3f(lp.x, lp.y - clamp(lp.y, -size, size), lp.z);
+        return length(q);
     }
     return 1e9;
 }
@@ -326,7 +332,7 @@ fn operator_mask(p: vec3f) -> f32 {
         }
 
         let lp = (op.inv_transform * vec4f(p, 1.0)).xyz;
-        let d = shape_distance(op.shape_type, lp);
+        let d = shape_distance(op.shape_type, lp, op.size);
 
         let falloff = max(0.0001, op.falloff);
         let factor = smoothstep(op.size - falloff, op.size, d);

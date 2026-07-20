@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import {
   BoxGeometry,
   BufferGeometry,
+  CapsuleGeometry,
   CylinderGeometry,
   Group,
   SphereGeometry,
@@ -32,6 +33,9 @@ function shapeGeometry(shape: ShapeType, size: number): BufferGeometry {
       return new CylinderGeometry(size, size, size * 2, 24, 1);
     case ShapeType.Slab:
       return new BoxGeometry(5, size * 2, 5);
+    case ShapeType.Capsule:
+      // matches the shader: core segment half-length = size, radius = size
+      return new CapsuleGeometry(size, size * 2, 6, 20);
     case ShapeType.Sphere:
     default:
       return new SphereGeometry(size, 20, 14);

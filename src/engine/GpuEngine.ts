@@ -196,14 +196,24 @@ export class GpuEngine {
     this.ensureVertexCapacity(1 << 18);
   }
 
+  /** Largest vertex count the device can bind as one storage buffer. */
+  maxVertexCapacity(): number {
+    const bytes = Math.min(
+      this.device.limits.maxStorageBufferBindingSize,
+      this.device.limits.maxBufferSize
+    );
+    return Math.floor(bytes / BYTES_PER_VERTEX / 3) * 3;
+  }
+
   /** (Re)allocate the shared vertex buffer if the budget grew/shrank. */
   ensureVertexCapacity(vertexCount: number) {
+    vertexCount = Math.min(vertexCount, this.maxVertexCapacity());
     if (this.vertexCapacity === vertexCount && this.vertexBuffer) return;
     this.vertexBuffer?.destroy();
     this.vertexBuffer = this.device.createBuffer({
       label: 'mc-vertices',
       size: vertexCount * BYTES_PER_VERTEX,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
     this.vertexCapacity = vertexCount;
     this.rebuildBindGroup();
@@ -342,6 +352,18 @@ export class GpuEngine {
 
   clearCounter() {
     this.device.queue.writeBuffer(this.counterBuffer, 0, this.zeroCounter);
+  }
+
+  /** Replace GPU vertex data with a CPU-filtered mesh (floater removal). */
+  writeVertexData(data: Float32Array, vertexCount: number) {
+    this.device.queue.writeBuffer(
+      this.vertexBuffer,
+      0,
+      data.buffer,
+      data.byteOffset,
+      vertexCount * BYTES_PER_VERTEX
+    );
+    this.device.queue.writeBuffer(this.counterBuffer, 0, new Uint32Array([vertexCount]));
   }
 
   writeUniforms(field: FieldParams, ctx: UniformContext) {

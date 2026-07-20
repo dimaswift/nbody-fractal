@@ -6,6 +6,7 @@ const PHASE_LABELS: Record<string, string> = {
   idle: 'Idle',
   searching: 'Locating surface…',
   growing: 'Growing bricks…',
+  filtering: 'Removing floaters…',
   refining: 'Refining (true field)…',
   reading: 'Reading back…',
   done: 'Ready',
@@ -32,6 +33,11 @@ export function StatusBar() {
           <span>{(stats.vertexCount / 3).toLocaleString()} tris</span>
           <span>{stats.bricksEvaluated} bricks</span>
           <span>{stats.elapsedMs.toFixed(0)} ms</span>
+          {stats.floatersRemoved > 0 && (
+            <span>
+              {stats.floatersRemoved} floater{stats.floatersRemoved > 1 ? 's' : ''} removed
+            </span>
+          )}
           {!stats.surfaceFound && <span className="warn">no surface found near seed</span>}
           {stats.budgetHit && <span className="warn">vertex budget hit</span>}
           {stats.brickCapHit && <span className="warn">brick cap hit ({stats.bricksQueued} queued)</span>}
