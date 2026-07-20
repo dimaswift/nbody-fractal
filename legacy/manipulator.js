@@ -80,20 +80,28 @@ export class SeedManipulator {
         // Disable orbit controls while dragging
         this.transformControls.addEventListener('dragging-changed', (event) => {
             this.orbitControls.enabled = !event.value;
+            this.isDragging = event.value;
         });
 
         // Trigger updates when dragged
         this.transformControls.addEventListener('objectChange', () => {
             if (this.selectedSphere) {
-                const index = this.spheres.indexOf(this.selectedSphere);
-                if (index !== -1) {
-                    const pos = this.selectedSphere.position;
-                    this.seeds[index].position[0] = pos.x;
-                    this.seeds[index].position[1] = pos.y;
-                    this.seeds[index].position[2] = pos.z;
-                    this.updateWireframe();
-                    this.onUpdate(this.seeds);
-                    this.onSelect(index); // update sidebar inputs
+                if (this.selectedSphere === this.trajTargetMesh) {
+                    const pos = this.trajTargetMesh.position;
+                    if (this.onTrajUpdate) {
+                        this.onTrajUpdate(pos.x, pos.y, pos.z);
+                    }
+                } else {
+                    const index = this.spheres.indexOf(this.selectedSphere);
+                    if (index !== -1) {
+                        const pos = this.selectedSphere.position;
+                        this.seeds[index].position[0] = pos.x;
+                        this.seeds[index].position[1] = pos.y;
+                        this.seeds[index].position[2] = pos.z;
+                        this.updateWireframe();
+                        this.onUpdate(this.seeds);
+                        this.onSelect(index); // update sidebar inputs
+                    }
                 }
             }
         });
@@ -227,16 +235,29 @@ export class SeedManipulator {
         this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
         this.raycaster.setFromCamera(this.mouse, this.camera);
-        const intersects = this.raycaster.intersectObjects(this.spheres);
+        const checkList = [...this.spheres];
+        if (this.trajTargetMesh && this.trajTargetMesh.visible) {
+            checkList.push(this.trajTargetMesh);
+        }
+        const intersects = this.raycaster.intersectObjects(checkList);
 
         if (intersects.length > 0) {
-            const sphere = intersects[0].object;
-            if (this.selectedSphere !== sphere) {
-                this.selectedSphere = sphere;
-                this.transformControls.attach(sphere);
-                const index = this.spheres.indexOf(sphere);
-                if (index !== -1) {
-                    this.onSelect(index);
+            const obj = intersects[0].object;
+            let rootObj = obj;
+            while (rootObj.parent && rootObj.parent !== this.scene) {
+                rootObj = rootObj.parent;
+            }
+            if (this.selectedSphere !== rootObj) {
+                this.selectedSphere = rootObj;
+                this.transformControls.attach(rootObj);
+                
+                if (rootObj === this.trajTargetMesh) {
+                    this.onSelect(-2); // Special index for trajectory target select
+                } else {
+                    const index = this.spheres.indexOf(rootObj);
+                    if (index !== -1) {
+                        this.onSelect(index);
+                    }
                 }
             }
         } else {
@@ -284,6 +305,13 @@ export class SeedManipulator {
     }
 
     selectSeed(index) {
+        if (index === -2) {
+            if (this.trajTargetMesh) {
+                this.selectedSphere = this.trajTargetMesh;
+                this.transformControls.attach(this.trajTargetMesh);
+            }
+            return;
+        }
         if (index >= 0 && index < this.spheres.length) {
             this.selectedSphere = this.spheres[index];
             this.transformControls.attach(this.selectedSphere);
@@ -291,5 +319,74 @@ export class SeedManipulator {
             this.transformControls.detach();
             this.selectedSphere = null;
         }
+    }
+
+    setTrajTarget(x, y, z, active) {
+        if (!this.trajTargetMesh) {
+            const geom = new THREE.SphereGeometry(0.03, 16, 16);
+            const mat = new THREE.MeshBasicMaterial({ 
+                color: 0xff3300, 
+                depthTest: false, 
+                transparent: true, 
+                opacity: 0.9 
+            });
+            this.trajTargetMesh = new THREE.Mesh(geom, mat);
+            
+            // Add a small wireframe helper box to show bounds
+            const boxGeom = new THREE.BoxGeometry(0.06, 0.06, 0.06);
+            const edges = new THREE.EdgesGeometry(boxGeom);
+            const lineMat = new THREE.LineBasicMaterial({ color: 0xff3300 });
+            const boxHelper = new THREE.LineSegments(edges, lineMat);
+            this.trajTargetMesh.add(boxHelper);
+            
+            this.scene.add(this.trajTargetMesh);
+        }
+        
+        this.trajTargetMesh.position.set(x, y, z);
+        this.trajTargetMesh.visible = active;
+        
+        // If inactive, also clear lines
+        if (!active && this.trajLineGroup) {
+            this.scene.remove(this.trajLineGroup);
+            this.trajLineGroup = null;
+        }
+    }
+
+    updateTrajectories(paths) {
+        // Clear previous lines
+        if (this.trajLineGroup) {
+            this.scene.remove(this.trajLineGroup);
+        }
+        this.trajLineGroup = new THREE.Group();
+        
+        // Colors for each body/seed trajectory
+        const colors = [
+            0xff0055, 0x00ffcc, 0xffcc00, 0xff00ff, 0x00ff00, 
+            0x0099ff, 0xff6600, 0xccff00, 0xaa00ff, 0x00ffff
+        ];
+        
+        paths.forEach((path, i) => {
+            if (path.length < 2) return;
+            const points = path.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const color = colors[i % colors.length];
+            const material = new THREE.LineBasicMaterial({ 
+                color: color, 
+                linewidth: 2.5,
+                transparent: true,
+                opacity: 0.85
+            });
+            const line = new THREE.Line(geometry, material);
+            this.trajLineGroup.add(line);
+            
+            // Draw a small dot at the end of the trajectory
+            const endGeom = new THREE.SphereGeometry(0.015, 8, 8);
+            const endMat = new THREE.MeshBasicMaterial({ color: color });
+            const endMesh = new THREE.Mesh(endGeom, endMat);
+            endMesh.position.copy(points[points.length - 1]);
+            this.trajLineGroup.add(endMesh);
+        });
+        
+        this.scene.add(this.trajLineGroup);
     }
 }

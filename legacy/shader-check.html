@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Shader Self-Test — N-Body Fractal</title>
+<style>
+    body { background: #0b0d10; color: #cfd8dc; font-family: ui-monospace, monospace; padding: 24px; font-size: 13px; }
+    h1 { font-size: 16px; color: #00d1b2; }
+    .ok { color: #7CFC00; }
+    .fail { color: #ff5252; white-space: pre-wrap; }
+    .warn { color: #ffd740; white-space: pre-wrap; }
+    .section { margin: 14px 0; padding: 10px 14px; border-left: 2px solid #263238; }
+</style>
+</head>
+<body>
+<h1>WGSL / Pipeline Self-Test</h1>
+<div id="out">Running…</div>
+<script type="module">
+const out = document.getElementById('out');
+const log = (cls, msg) => {
+    const d = document.createElement('div');
+    d.className = 'section ' + cls;
+    d.textContent = msg;
+    out.appendChild(d);
+};
+
+async function compileVariant(device, name, code) {
+    const module = device.createShaderModule({ code });
+    const info = await module.getCompilationInfo();
+    const errors = info.messages.filter(m => m.type === 'error');
+    const warnings = info.messages.filter(m => m.type === 'warning');
+    for (const w of warnings) log('warn', `[${name}] warning L${w.lineNum}: ${w.message}`);
+    if (errors.length) {
+        for (const e of errors) log('fail', `[${name}] ERROR L${e.lineNum}:${e.linePos}: ${e.message}`);
+        return null;
+    }
+    log('ok', `[${name}] shader module compiled clean`);
+    return module;
+}
+
+function makeLayouts(device) {
+    const C = GPUShaderStage.COMPUTE, F = GPUShaderStage.FRAGMENT, V = GPUShaderStage.VERTEX;
+    return {
+        compute: device.createBindGroupLayout({ entries: [
+            { binding: 0, visibility: C, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: C, buffer: { type: 'read-only-storage' } },
+            { binding: 2, visibility: C, storageTexture: { access: 'write-only', format: 'r32float', viewDimension: '2d' } },
+        ]}),
+        render: device.createBindGroupLayout({ entries: [
+            { binding: 0, visibility: F, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: F, texture: { sampleType: 'unfilterable-float', viewDimension: '2d' } },
+        ]}),
+        mcVolume: device.createBindGroupLayout({ entries: [
+            { binding: 0, visibility: C, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: C, buffer: { type: 'read-only-storage' } },
+            { binding: 3, visibility: C, buffer: { type: 'storage' } },
+        ]}),
+        mcTri: device.createBindGroupLayout({ entries: [
+            { binding: 0, visibility: C, buffer: { type: 'uniform' } },
+            { binding: 3, visibility: C, buffer: { type: 'storage' } },
+            { binding: 4, visibility: C, buffer: { type: 'storage' } },
+            { binding: 5, visibility: C, buffer: { type: 'storage' } },
+            { binding: 6, visibility: C, buffer: { type: 'read-only-storage' } },
+        ]}),
+        mcPrep: device.createBindGroupLayout({ entries: [
+            { binding: 0, visibility: C, buffer: { type: 'uniform' } },
+            { binding: 5, visibility: C, buffer: { type: 'storage' } },
+            { binding: 10, visibility: C, buffer: { type: 'storage' } },
+            { binding: 11, visibility: C, buffer: { type: 'storage' } },
+        ]}),
+        mcRefine: device.createBindGroupLayout({ entries: [
+            { binding: 0, visibility: C, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: C, buffer: { type: 'read-only-storage' } },
+            { binding: 4, visibility: C, buffer: { type: 'storage' } },
+            { binding: 5, visibility: C, buffer: { type: 'storage' } },
+        ]}),
+        mcRender: device.createBindGroupLayout({ entries: [
+            { binding: 0, visibility: F, buffer: { type: 'uniform' } },
+            { binding: 9, visibility: F, buffer: { type: 'read-only-storage' } },
+            { binding: 7, visibility: V, buffer: { type: 'read-only-storage' } },
+            { binding: 8, visibility: V | F, buffer: { type: 'uniform' } },
+        ]}),
+    };
+}
+
+async function tryPipeline(device, name, fn) {
+    device.pushErrorScope('validation');
+    try { fn(); } catch (e) { log('fail', `[${name}] threw: ${e.message}`); }
+    const err = await device.popErrorScope();
+    if (err) log('fail', `[${name}] validation: ${err.message}`);
+    else log('ok', `[${name}] pipeline created OK`);
+}
+
+async function run() {
+    out.textContent = '';
+    if (!navigator.gpu) { log('fail', 'WebGPU not available'); return; }
+    const adapter = await navigator.gpu.requestAdapter();
+    const device = await adapter.requestDevice();
+    device.addEventListener('uncapturederror', e => log('fail', 'uncaptured: ' + e.error.message));
+
+    const src = await (await fetch('./shader.wgsl')).text();
+
+    // Specialized variant, mirroring rebuildComputePipeline substitutions
+    const spec = src
+        .replace(/const BODY_COUNT = \d+u;/g, 'const BODY_COUNT = 5u;')
+        .replace(/const SHADER_STEPS = -?\d+;/g, 'const SHADER_STEPS = 12;')
+        .replace(/const SHADER_INTERACTION_MODE = -?\d+;/g, 'const SHADER_INTERACTION_MODE = 0;')
+        .replace(/const SHADER_METRIC_MODE = -?\d+;/g, 'const SHADER_METRIC_MODE = 1;')
+        .replace(/const SHADER_WARP_TYPE = -?\d+;/g, 'const SHADER_WARP_TYPE = 0;')
+        .replace(/const SPEC_SEEDS = false;/g, 'const SPEC_SEEDS = true;')
+        .replace(/const seed_positions = array<vec4f, \d+>\(vec4f\(0.0\)\);/g,
+            'const seed_positions = array<vec4f, 5>(vec4f(0.1), vec4f(0.2), vec4f(0.3), vec4f(0.4), vec4f(0.5));')
+        .replace(/const seed_masses = array<f32, \d+>\(0.0\);/g,
+            'const seed_masses = array<f32, 5>(1.0, 1.0, 1.0, 1.0, 1.0);');
+
+    for (const [name, code] of [['generic', src], ['specialized', spec]]) {
+        const module = await compileVariant(device, name, code);
+        if (!module) continue;
+
+        const L = makeLayouts(device);
+        const pl = (bgl) => device.createPipelineLayout({ bindGroupLayouts: [bgl] });
+        const fmt = navigator.gpu.getPreferredCanvasFormat();
+
+        await tryPipeline(device, name + '/compute_main', () =>
+            device.createComputePipeline({ layout: pl(L.compute), compute: { module, entryPoint: 'compute_main' } }));
+        await tryPipeline(device, name + '/compute_volume', () =>
+            device.createComputePipeline({ layout: pl(L.mcVolume), compute: { module, entryPoint: 'compute_volume' } }));
+        await tryPipeline(device, name + '/compute_marching_cubes', () =>
+            device.createComputePipeline({ layout: pl(L.mcTri), compute: { module, entryPoint: 'compute_marching_cubes' } }));
+        await tryPipeline(device, name + '/prepare_refine_dispatch', () =>
+            device.createComputePipeline({ layout: pl(L.mcPrep), compute: { module, entryPoint: 'prepare_refine_dispatch' } }));
+        await tryPipeline(device, name + '/refine_vertices', () =>
+            device.createComputePipeline({ layout: pl(L.mcRefine), compute: { module, entryPoint: 'refine_vertices' } }));
+        await tryPipeline(device, name + '/2d render', () =>
+            device.createRenderPipeline({
+                layout: pl(L.render),
+                vertex: { module, entryPoint: 'vertex_main' },
+                fragment: { module, entryPoint: 'fragment_main', targets: [{ format: fmt }] },
+                primitive: { topology: 'triangle-list' },
+                depthStencil: { depthWriteEnabled: false, depthCompare: 'always', format: 'depth24plus' },
+            }));
+        await tryPipeline(device, name + '/mc render', () =>
+            device.createRenderPipeline({
+                layout: pl(L.mcRender),
+                vertex: { module, entryPoint: 'mc_vertex_main' },
+                fragment: { module, entryPoint: 'mc_fragment_main', targets: [{ format: fmt }] },
+                primitive: { topology: 'triangle-list' },
+                depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' },
+            }));
+    }
+    log('ok', 'Self-test finished.');
+}
+run();
+</script>
+</body>
+</html>

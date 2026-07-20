@@ -1,0 +1,401 @@
+/* N-Body Fractal Studio — dark editor theme */
+
+:root {
+  --bg: #0b0b0f;
+  --panel: #131318;
+  --panel-2: #1a1a22;
+  --border: #26262f;
+  --text: #d6d6e0;
+  --text-dim: #7a7a8a;
+  --accent: #4b8df8;
+  --danger: #e25555;
+  --ok: #43b581;
+  --warn: #ffb020;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 280px 1fr 312px;
+  grid-template-rows: 44px 1fr 30px;
+  grid-template-areas:
+    'topbar topbar topbar'
+    'left viewport right'
+    'status status status';
+  height: 100%;
+}
+
+.topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.4px;
+  color: #fff;
+}
+
+.topbar-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.sidebar {
+  overflow-y: auto;
+  background: var(--panel);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-left {
+  grid-area: left;
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-right {
+  grid-area: right;
+  border-left: 1px solid var(--border);
+}
+
+.viewport {
+  grid-area: viewport;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.gpu-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--danger);
+  text-align: center;
+  padding: 24px;
+}
+
+/* --- sections --- */
+
+.section {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.section-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.chevron {
+  display: inline-block;
+  transition: transform 0.12s;
+  color: var(--text-dim);
+}
+
+.chevron.open {
+  transform: rotate(90deg);
+}
+
+.section-body {
+  padding: 4px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* --- rows & controls --- */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.row-label {
+  flex: 0 0 84px;
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-control {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.row-value {
+  flex: 0 0 48px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-size: 11px;
+}
+
+input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+  height: 14px;
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+select,
+input.num,
+input.card-name {
+  background: #101016;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  min-width: 0;
+  flex: 1;
+}
+
+select:focus,
+input:focus {
+  outline: 1px solid var(--accent);
+}
+
+/* --- buttons --- */
+
+.btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn-primary {
+  background: rgba(75, 141, 248, 0.16);
+  border-color: rgba(75, 141, 248, 0.5);
+}
+
+.btn-danger {
+  background: rgba(226, 85, 85, 0.12);
+  border-color: rgba(226, 85, 85, 0.4);
+}
+
+.btn-ghost {
+  background: none;
+}
+
+/* --- segmented control --- */
+
+.seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.seg button {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  padding: 5px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.seg button + button {
+  border-left: 1px solid var(--border);
+}
+
+.seg .seg-on {
+  background: rgba(75, 141, 248, 0.18);
+  color: #fff;
+}
+
+/* --- cards (operators, seeds, bakes) --- */
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+}
+
+.card-selected {
+  border-color: var(--accent);
+  background: rgba(75, 141, 248, 0.06);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 11px;
+  color: #fff;
+}
+
+.card-name {
+  flex: 1;
+  font-weight: 600;
+}
+
+/* --- misc --- */
+
+.hint {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.hint-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.seed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  width: 24px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.chip-on {
+  border-color: var(--accent);
+  color: #fff;
+  background: rgba(75, 141, 248, 0.18);
+}
+
+.palette-swatch {
+  height: 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+/* --- status bar --- */
+
+.statusbar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.badge {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.badge-ready,
+.badge-done {
+  background: rgba(67, 181, 129, 0.15);
+  color: var(--ok);
+}
+
+.badge-init,
+.badge-busy {
+  background: rgba(255, 176, 32, 0.12);
+  color: var(--warn);
+}
+
+.badge-error {
+  background: rgba(226, 85, 85, 0.15);
+  color: var(--danger);
+}
+
+.warn {
+  color: var(--warn);
+}

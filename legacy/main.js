@@ -168,6 +168,8 @@ const state = {
     mcResY: 252,
     mcResZ: 252,
     mcInvertNormals: false,
+    refineMode: 2,       // 0 = off, 1 = fast, 2 = ultra (true-field surface refinement)
+    normalDetail: 0.30,  // normal sampling step as fraction of a voxel
     samplingZoom: 0.75,
     clipShape: 1,
     clipSize: 1.40,
@@ -183,6 +185,18 @@ const state = {
     fractalPivotZ: 0.0,
     fractalPivotW: 0.0,
     colorSource: 0,
+    curvatureScale: 0.1,
+    curvatureExponent: 1.0,
+    curvatureBias: 0.0,
+    curvatureFilter: 1.5,
+    curvatureMode: 0,
+
+    // Surface FX
+    aoStrength: 0.7,
+    aoRadius: 1.6,
+    rimStrength: 0.35,
+    iridescence: 0.0,
+    exposure: 1.15,
     isUserInteracting: false,
     interactionMode: 0,
     hollowRadius: 0,
@@ -201,6 +215,12 @@ const state = {
     rotXW: 0.0,
     rotYW: 0.0,
     rotZW: 0.0,
+
+    // Trajectory guide parameters
+    trajActive: false,
+    trajX: 0.0,
+    trajY: 0.0,
+    trajZ: 0.0,
 
     // Camera parameters (3D Raymarching Mode)
     camTheta: 0.8,
@@ -417,6 +437,8 @@ function triggerRender(forceMcRecompute = true) {
     const activeResX = state.isUserInteracting ? 64 : state.mcResX;
     const activeResY = state.isUserInteracting ? 64 : state.mcResY;
     const activeResZ = state.isUserInteracting ? 64 : state.mcResZ;
+    // Drop to fast refinement while dragging for responsiveness
+    const activeRefineMode = state.isUserInteracting ? Math.min(state.refineMode, 1) : state.refineMode;
 
     const { sliceU, sliceV } = getSlicePlaneVectors();
 
@@ -464,6 +486,8 @@ function triggerRender(forceMcRecompute = true) {
         gridSizeZ: activeResZ,
         maxVertices: state.mcBudget * 3,
         invertNormals: state.mcInvertNormals,
+        refineMode: activeRefineMode,
+        normalDetail: state.normalDetail,
         samplingZoom: state.samplingZoom,
         clipShape: state.clipShape,
         clipSize: state.clipSize,
@@ -495,6 +519,16 @@ function triggerRender(forceMcRecompute = true) {
         paletteC: palette.c,
         paletteD: palette.d,
         colorSource: state.colorSource,
+        curvatureScale: state.curvatureScale,
+        curvatureExponent: state.curvatureExponent,
+        curvatureBias: state.curvatureBias,
+        aoStrength: state.aoStrength,
+        aoRadius: state.aoRadius,
+        rimStrength: state.rimStrength,
+        iridescence: state.iridescence,
+        exposure: state.exposure,
+        curvatureFilter: state.curvatureFilter,
+        curvatureMode: state.curvatureMode,
     };
 
     // Update GPU buffers
@@ -516,9 +550,13 @@ function triggerRender(forceMcRecompute = true) {
             gridX: activeResX,
             gridY: activeResY,
             gridZ: activeResZ,
-            budget: state.mcBudget
+            budget: state.mcBudget,
+            refineMode: activeRefineMode
         }
     );
+
+    // Update trajectory paths guide if active
+    updateTrajectoryGuide();
 }
 
 // Redraw only the color mapping (only runs fragment shader, very fast!)
@@ -543,6 +581,16 @@ function triggerColorUpdate() {
         paletteC: palette.c,
         paletteD: palette.d,
         colorSource: state.colorSource,
+        curvatureScale: state.curvatureScale,
+        curvatureExponent: state.curvatureExponent,
+        curvatureBias: state.curvatureBias,
+        aoStrength: state.aoStrength,
+        aoRadius: state.aoRadius,
+        rimStrength: state.rimStrength,
+        iridescence: state.iridescence,
+        exposure: state.exposure,
+        curvatureFilter: state.curvatureFilter,
+        curvatureMode: state.curvatureMode,
     };
 
     renderer.writeRenderUniforms(renderUniforms);
@@ -848,7 +896,13 @@ function updateUIElementsVisibility() {
         const showGrad = selectColor >= 1;
         gradScaleRow.style.display = showGrad ? 'flex' : 'none';
         // Always keep phase for shifting
-        gradPhaseRow.style.display = 'flex';
+    }
+
+    // Toggle curvature controls
+    const curvatureGroup = document.getElementById('group-curvature');
+    const colorSourceSelect = document.getElementById('select-color-source');
+    if (curvatureGroup && colorSourceSelect) {
+        curvatureGroup.style.display = (colorSourceSelect.value === "1") ? 'flex' : 'none';
     }
 }
 
@@ -863,8 +917,8 @@ function updateSelectedSeedUI(index) {
     const inW = document.getElementById('input-seed-w');
     const inM = document.getElementById('input-seed-mass');
 
-    if (index === -1) {
-        indexLbl.textContent = 'None';
+    if (index === -1 || index === -2) {
+        indexLbl.textContent = index === -2 ? 'Trajectory Target' : 'None';
         inX.disabled = true;
         inY.disabled = true;
         inZ.disabled = true;
@@ -1045,7 +1099,7 @@ function update3DPanelVisibility() {
     const dispMC = (is3D && isMC) ? 'flex' : 'none';
     const dispVol = (is3D && !isMC) ? 'flex' : 'none';
 
-    const rows = ['row-isovalue', 'row-mc-budget', 'row-mc-res-x', 'row-mc-res-y', 'row-mc-res-z', 'row-mc-invert-normals', 'row-mc-presets', 'row-mc-boolean'];
+    const rows = ['row-isovalue', 'row-mc-budget', 'row-mc-res-x', 'row-mc-res-y', 'row-mc-res-z', 'row-mc-invert-normals', 'row-mc-presets', 'row-mc-boolean', 'row-mc-refine', 'row-mc-normal-detail'];
     rows.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = dispMC;
@@ -1202,6 +1256,40 @@ function bindUIEventListeners() {
             triggerRender();
         });
     }
+
+    const checkTrajActive = document.getElementById('check-trajectory-active');
+    const trajControls = document.getElementById('trajectory-controls');
+    if (checkTrajActive) {
+        checkTrajActive.addEventListener('change', (e) => {
+            state.trajActive = e.target.checked;
+            if (trajControls) {
+                trajControls.style.display = state.trajActive ? 'flex' : 'none';
+            }
+            if (state.trajActive && manipulator) {
+                manipulator.selectSeed(-2); // Select trajectory target
+            } else if (!state.trajActive && manipulator) {
+                manipulator.selectSeed(-1); // Detach transform controls
+            }
+            updateTrajectoryGuide();
+        });
+    }
+
+    const bindTrajInput = (id, stateKey) => {
+        const inp = document.getElementById(id);
+        if (inp) {
+            inp.addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value) || 0.0;
+                state[stateKey] = val;
+                if (manipulator && state.trajActive) {
+                    manipulator.setTrajTarget(state.trajX, state.trajY, state.trajZ, true);
+                    updateTrajectoryGuide();
+                }
+            });
+        }
+    };
+    bindTrajInput('input-traj-x', 'trajX');
+    bindTrajInput('input-traj-y', 'trajY');
+    bindTrajInput('input-traj-z', 'trajZ');
     bindSlider('slider-dt', 'dt', 'val-dt');
     bindSlider('slider-soften', 'soften', 'val-soften');
     const escapeSlider = document.getElementById('slider-escape');
@@ -1315,6 +1403,17 @@ function bindUIEventListeners() {
             triggerRender();
         });
     }
+
+    // True-field surface refinement quality
+    const selectMcRefine = document.getElementById('select-mc-refine');
+    if (selectMcRefine) {
+        selectMcRefine.addEventListener('change', (e) => {
+            state.refineMode = parseInt(e.target.value);
+            triggerRender();
+        });
+    }
+
+    bindSlider('slider-mc-normal-detail', 'normalDetail', 'val-mc-normal-detail');
 
     // Quick Resolution Preset buttons
     const btnMcPreview = document.getElementById('btn-mc-preview');
@@ -1513,7 +1612,7 @@ function bindUIEventListeners() {
 
     const updateManualSeed = () => {
         const idx = state.selectedSeedIndex;
-        if (idx === -1) return;
+        if (idx === -1 || idx === -2) return;
         const x = parseFloat(inpX.value) || 0;
         const y = parseFloat(inpY.value) || 0;
         const z = parseFloat(inpZ.value) || 0;
@@ -1581,6 +1680,7 @@ function bindUIEventListeners() {
     if (colorSourceSelect) {
         colorSourceSelect.addEventListener('change', (e) => {
             state.colorSource = parseInt(e.target.value);
+            updateUIElementsVisibility();
             triggerColorUpdate();
         });
     }
@@ -1596,10 +1696,27 @@ function bindUIEventListeners() {
 
     bindSlider('slider-grad-scale', 'gradientScale', 'val-grad-scale', (v) => v, true);
     bindSlider('slider-grad-phase', 'gradientPhase', 'val-grad-phase', (v) => v, true);
+    bindSlider('slider-ao-strength', 'aoStrength', 'val-ao-strength', (v) => v, true);
+    bindSlider('slider-ao-radius', 'aoRadius', 'val-ao-radius', (v) => v, true);
+    bindSlider('slider-rim', 'rimStrength', 'val-rim', (v) => v, true);
+    bindSlider('slider-iridescence', 'iridescence', 'val-iridescence', (v) => v, true);
+    bindSlider('slider-exposure', 'exposure', 'val-exposure', (v) => v, true);
     bindSlider('slider-zebra-freq', 'zebraFrequency', 'val-zebra-freq', (v) => v, true);
     bindSlider('slider-zebra-sharp', 'zebraSharpness', 'val-zebra-sharp', (v) => v, true);
     bindSlider('slider-relief-scale', 'reliefScale', 'val-relief-scale', (v) => v, true);
     bindSlider('slider-specular', 'specular', 'val-specular', (v) => v, true);
+    bindSlider('slider-curvature-scale', 'curvatureScale', 'val-curvature-scale', (v) => v, true);
+    bindSlider('slider-curvature-exp', 'curvatureExponent', 'val-curvature-exp', (v) => v, true);
+    bindSlider('slider-curvature-bias', 'curvatureBias', 'val-curvature-bias', (v) => v, true);
+    bindSlider('slider-curvature-filter', 'curvatureFilter', 'val-curvature-filter', (v) => v, true);
+
+    const curvatureModeSelect = document.getElementById('select-curvature-mode');
+    if (curvatureModeSelect) {
+        curvatureModeSelect.addEventListener('change', (e) => {
+            state.curvatureMode = parseInt(e.target.value);
+            triggerColorUpdate();
+        });
+    }
 
     // Add / Delete seeds
     document.getElementById('btn-add-seed').addEventListener('click', () => {
@@ -1946,7 +2063,9 @@ const CONFIG_KEYS = [
     'steps', 'dt', 'soften', 'escapeR2', 'density', 'coreVelX', 'coreVelY', 'metricMode', 
     'temporalMode', 'temporalScale', 'temporalOffset', 'temporalParam', 
     'colorMode', 'paletteName', 'gradientScale', 'gradientPhase', 'zebraFrequency', 'zebraSharpness', 'reliefScale', 'specular',
-    'fractalPivotX', 'fractalPivotY', 'fractalPivotZ', 'fractalPivotW', 'colorSource', 'hollowRadius', 'operators', 'modelMatrix', 'interactionMode'
+    'fractalPivotX', 'fractalPivotY', 'fractalPivotZ', 'fractalPivotW', 'colorSource', 'hollowRadius', 'operators', 'modelMatrix', 'interactionMode',
+    'curvatureScale', 'curvatureExponent', 'curvatureBias', 'curvatureFilter', 'curvatureMode',
+    'refineMode', 'normalDetail', 'aoStrength', 'aoRadius', 'rimStrength', 'iridescence', 'exposure'
 ];
 
 const LOCAL_STORAGE_KEY = 'nbody_fractal_explorer_configs';
@@ -2176,6 +2295,9 @@ function syncUIFromState() {
     setVal('slider-mc-res-z', state.mcResZ);
     setText('val-mc-res-z', state.mcResZ);
     setCheck('check-mc-invert-normals', state.mcInvertNormals);
+    setVal('select-mc-refine', state.refineMode);
+    setVal('slider-mc-normal-detail', state.normalDetail);
+    setText('val-mc-normal-detail', state.normalDetail.toFixed(2));
     setVal('select-mc-clip-shape', state.clipShape);
     setVal('slider-mc-clip-size', state.clipSize);
     setText('val-mc-clip-size', state.clipSize.toFixed(2));
@@ -2217,6 +2339,27 @@ function syncUIFromState() {
     setText('val-relief-scale', state.reliefScale.toFixed(2));
     setVal('slider-specular', state.specular);
     setText('val-specular', state.specular.toFixed(2));
+
+    setVal('slider-curvature-scale', state.curvatureScale);
+    setText('val-curvature-scale', state.curvatureScale.toFixed(2));
+    setVal('slider-curvature-exp', state.curvatureExponent);
+    setText('val-curvature-exp', state.curvatureExponent.toFixed(2));
+    setVal('slider-curvature-bias', state.curvatureBias);
+    setText('val-curvature-bias', state.curvatureBias.toFixed(2));
+    setVal('slider-curvature-filter', state.curvatureFilter);
+    setText('val-curvature-filter', state.curvatureFilter.toFixed(2));
+    setVal('select-curvature-mode', state.curvatureMode);
+
+    setVal('slider-ao-strength', state.aoStrength);
+    setText('val-ao-strength', state.aoStrength.toFixed(2));
+    setVal('slider-ao-radius', state.aoRadius);
+    setText('val-ao-radius', state.aoRadius.toFixed(2));
+    setVal('slider-rim', state.rimStrength);
+    setText('val-rim', state.rimStrength.toFixed(2));
+    setVal('slider-iridescence', state.iridescence);
+    setText('val-iridescence', state.iridescence.toFixed(2));
+    setVal('slider-exposure', state.exposure);
+    setText('val-exposure', state.exposure.toFixed(2));
 }
 
 // Entry Point
@@ -2246,6 +2389,24 @@ async function main() {
                 updateSelectedSeedUI(selectedIndex);
             }
         );
+
+        // Bind trajectory target drag update
+        manipulator.onTrajUpdate = (x, y, z) => {
+            state.trajX = x;
+            state.trajY = y;
+            state.trajZ = z;
+            
+            // Sync inputs in the sidebar
+            const inpX = document.getElementById('input-traj-x');
+            const inpY = document.getElementById('input-traj-y');
+            const inpZ = document.getElementById('input-traj-z');
+            if (inpX) inpX.value = x.toFixed(3);
+            if (inpY) inpY.value = y.toFixed(3);
+            if (inpZ) inpZ.value = z.toFixed(3);
+            
+            // Trigger redraw of lines
+            updateTrajectoryGuide();
+        };
 
         // Window resize observer
         const resizeObserver = new ResizeObserver(entries => {
@@ -2386,6 +2547,142 @@ function applyIncrementalRotation(dx, dy, dz = 0.0) {
     mat4Multiply(tempInc2, tempZ, tempInc1);
     mat4Multiply(nextMatrix, tempInc2, state.modelMatrix);
     state.modelMatrix = nextMatrix;
+}
+
+function evalTemporalCpu(p3) {
+    const mode = state.temporalMode;
+    const scale = state.temporalScale;
+    const offset = state.temporalOffset;
+    const param = state.temporalParam;
+    
+    if (mode === 0) {
+        return 0.0; // w_slice is 0.0 in 3D Volume mode
+    } else if (mode === 1) {
+        return offset;
+    } else if (mode === 2) {
+        const len = Math.sqrt(p3[0]*p3[0] + p3[1]*p3[1] + p3[2]*p3[2]);
+        return offset + scale * len;
+    } else if (mode === 3) {
+        const len = Math.sqrt(p3[0]*p3[0] + p3[1]*p3[1] + p3[2]*p3[2]);
+        return offset + scale * Math.sin(param * len);
+    } else if (mode === 4) {
+        const proj = p3[0]*0.577 + p3[1]*0.577 - p3[2]*0.577;
+        return offset + scale * proj;
+    } else if (mode === 5) {
+        return offset + scale * (p3[0]*p3[0] - p3[1]*p3[1]);
+    }
+    return 0.0;
+}
+
+function computeTrajectory(startPos3) {
+    const pivot = [state.fractalPivotX, state.fractalPivotY, state.fractalPivotZ, state.fractalPivotW];
+    const pos3Zoomed = [
+        (startPos3[0] - pivot[0]) * state.samplingZoom + pivot[0],
+        (startPos3[1] - pivot[1]) * state.samplingZoom + pivot[1],
+        (startPos3[2] - pivot[2]) * state.samplingZoom + pivot[2]
+    ];
+    const w = evalTemporalCpu(pos3Zoomed);
+    const wZoomed = (w - pivot[3]) * state.samplingZoom + pivot[3];
+    const initialPos4 = [pos3Zoomed[0], pos3Zoomed[1], pos3Zoomed[2], wZoomed];
+    
+    const renderSteps = state.scaleStepsWithZoom
+        ? Math.max(state.steps, Math.min(300, Math.round(state.steps + 30.0 * Math.max(0.0, -Math.log10(state.zoom)))))
+        : state.steps;
+
+    const bodies = state.seeds.map(seed => {
+        const dx = initialPos4[0] - seed.position[0];
+        const dy = initialPos4[1] - seed.position[1];
+        const dz = initialPos4[2] - seed.position[2];
+        const dw = initialPos4[3] - (seed.position[3] !== undefined ? seed.position[3] : 0.0);
+        const d = Math.sqrt(dx*dx + dy*dy + dz*dz + dw*dw);
+        const val = state.density / Math.exp(d);
+        
+        return {
+            pos: [val, val, val, val],
+            vel: [0, 0, 0, 0],
+            mass: seed.mass
+        };
+    });
+    
+    if (bodies.length > 0) {
+        bodies[0].vel = [state.coreVelX, state.coreVelY, 0.0, 0.0];
+    }
+    
+    const getAccelerations = (bList) => {
+        const acc = bList.map(() => [0, 0, 0, 0]);
+        for (let i = 0; i < bList.length; i++) {
+            for (let j = 0; j < bList.length; j++) {
+                if (i === j) continue;
+                const rx = bList[j].pos[0] - bList[i].pos[0];
+                const ry = bList[j].pos[1] - bList[i].pos[1];
+                const rz = bList[j].pos[2] - bList[i].pos[2];
+                const rw = bList[j].pos[3] - bList[i].pos[3];
+                
+                const r2 = rx*rx + ry*ry + rz*rz + rw*rw + state.soften;
+                const inv = 1.0 / Math.sqrt(r2);
+                const inv3 = inv * inv * inv;
+                
+                if (state.interactionMode === 1) {
+                    const factor = -bList[i].mass * bList[j].mass * inv3;
+                    acc[i][0] += rx * factor;
+                    acc[i][1] += ry * factor;
+                    acc[i][2] += rz * factor;
+                    acc[i][3] += rw * factor;
+                } else {
+                    const factor = bList[j].mass * inv3;
+                    acc[i][0] += rx * factor;
+                    acc[i][1] += ry * factor;
+                    acc[i][2] += rz * factor;
+                    acc[i][3] += rw * factor;
+                }
+            }
+        }
+        return acc;
+    };
+    
+    const paths = bodies.map(() => []);
+    
+    bodies.forEach((b, i) => {
+        paths[i].push([...b.pos]);
+    });
+    
+    let a0 = getAccelerations(bodies);
+    const dt = state.dt;
+    const dt2 = dt * dt;
+    
+    for (let s = 0; s < renderSteps; s++) {
+        for (let i = 0; i < bodies.length; i++) {
+            bodies[i].pos[0] += bodies[i].vel[0] * dt + 0.5 * a0[i][0] * dt2;
+            bodies[i].pos[1] += bodies[i].vel[1] * dt + 0.5 * a0[i][1] * dt2;
+            bodies[i].pos[2] += bodies[i].vel[2] * dt + 0.5 * a0[i][2] * dt2;
+            bodies[i].pos[3] += bodies[i].vel[3] * dt + 0.5 * a0[i][3] * dt2;
+        }
+        
+        const a1 = getAccelerations(bodies);
+        
+        for (let i = 0; i < bodies.length; i++) {
+            bodies[i].vel[0] += 0.5 * (a0[i][0] + a1[i][0]) * dt;
+            bodies[i].vel[1] += 0.5 * (a0[i][1] + a1[i][1]) * dt;
+            bodies[i].vel[2] += 0.5 * (a0[i][2] + a1[i][2]) * dt;
+            bodies[i].vel[3] += 0.5 * (a0[i][3] + a1[i][3]) * dt;
+            a0[i] = a1[i];
+            
+            paths[i].push([...bodies[i].pos]);
+        }
+    }
+    
+    return paths;
+}
+
+function updateTrajectoryGuide() {
+    if (!manipulator) return;
+    if (state.trajActive) {
+        const paths = computeTrajectory([state.trajX, state.trajY, state.trajZ]);
+        manipulator.setTrajTarget(state.trajX, state.trajY, state.trajZ, true);
+        manipulator.updateTrajectories(paths);
+    } else {
+        manipulator.setTrajTarget(0, 0, 0, false);
+    }
 }
 
 window.addEventListener('DOMContentLoaded', main);

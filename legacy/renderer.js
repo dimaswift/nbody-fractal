@@ -27,7 +27,7 @@ export class WebGPURenderer {
         
         // Array buffers for CPU updates
         this.uniformsData = new ArrayBuffer(816);
-        this.renderUniformsData = new ArrayBuffer(144);
+        this.renderUniformsData = new ArrayBuffer(176);
         this.seedsData = new ArrayBuffer(1024);
         
         this.mcNeedsRecompute = true;
@@ -96,7 +96,7 @@ export class WebGPURenderer {
         });
 
         this.renderUniformBuffer = this.device.createBuffer({
-            size: 144,
+            size: 176,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
@@ -188,15 +188,22 @@ export class WebGPURenderer {
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
         });
 
-        // 4. Allocate Indirect Draw Buffer (16 bytes)
+        // 4. Allocate Indirect Draw Buffer (16 bytes) — also written by the
+        // prepare_refine_dispatch kernel (clamps vertex count to budget)
         this.mcIndirectDrawBuffer = this.device.createBuffer({
             size: 16,
-            usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+            usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
         });
 
         // Initialize Indirect buffer with [0, 1, 0, 0]
         const indirectArgs = new Uint32Array([0, 1, 0, 0]);
         this.device.queue.writeBuffer(this.mcIndirectDrawBuffer, 0, indirectArgs);
+
+        // 4b. Indirect dispatch args for the true-field refinement pass
+        this.mcRefineDispatchBuffer = this.device.createBuffer({
+            size: 12,
+            usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE
+        });
 
         // 5. Allocate TriTable Buffer (16 KB)
         this.mcTriTableBuffer = this.device.createBuffer({
@@ -344,10 +351,41 @@ export class WebGPURenderer {
             compute: { module: shaderModule, entryPoint: "compute_marching_cubes" }
         });
 
+        // --- REFINE DISPATCH PREP PIPELINE (writes draw + dispatch args) ---
+        this.mcPrepBindGroupLayout = this.device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+                { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                { binding: 10, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                { binding: 11, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }
+            ]
+        });
+
+        this.mcPrepPipeline = this.device.createComputePipeline({
+            layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.mcPrepBindGroupLayout] }),
+            compute: { module: shaderModule, entryPoint: "prepare_refine_dispatch" }
+        });
+
+        // --- TRUE-FIELD REFINEMENT PIPELINE ---
+        this.mcRefineBindGroupLayout = this.device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+                { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }
+            ]
+        });
+
+        this.mcRefinePipeline = this.device.createComputePipeline({
+            layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.mcRefineBindGroupLayout] }),
+            compute: { module: shaderModule, entryPoint: "refine_vertices" }
+        });
+
         // --- MC RENDER PIPELINE ---
         this.mcRenderBindGroupLayout = this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+                { binding: 9, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
                 { binding: 7, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
                 { binding: 8, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }
             ]
@@ -394,8 +432,29 @@ export class WebGPURenderer {
             layout: this.mcRenderBindGroupLayout,
             entries: [
                 { binding: 0, resource: { buffer: this.renderUniformBuffer } },
+                { binding: 9, resource: { buffer: this.mcVolumeBuffer } },
                 { binding: 7, resource: { buffer: this.mcVertexBuffer } },
                 { binding: 8, resource: { buffer: this.uniformBuffer } }
+            ]
+        });
+
+        this.mcPrepBindGroup = this.device.createBindGroup({
+            layout: this.mcPrepBindGroupLayout,
+            entries: [
+                { binding: 0, resource: { buffer: this.uniformBuffer } },
+                { binding: 5, resource: { buffer: this.mcAtomicCounterBuffer } },
+                { binding: 10, resource: { buffer: this.mcRefineDispatchBuffer } },
+                { binding: 11, resource: { buffer: this.mcIndirectDrawBuffer } }
+            ]
+        });
+
+        this.mcRefineBindGroup = this.device.createBindGroup({
+            layout: this.mcRefineBindGroupLayout,
+            entries: [
+                { binding: 0, resource: { buffer: this.uniformBuffer } },
+                { binding: 1, resource: { buffer: this.seedBuffer } },
+                { binding: 4, resource: { buffer: this.mcVertexBuffer } },
+                { binding: 5, resource: { buffer: this.mcAtomicCounterBuffer } }
             ]
         });
     }
@@ -550,8 +609,10 @@ export class WebGPURenderer {
 
         f32.set(data.fractalPivot, 96);
         f32[100] = data.hollowRadius;
+        f32[101] = data.normalDetail !== undefined ? data.normalDetail : 0.3;
 
         u32[104] = data.operators.length;
+        u32[105] = data.refineMode !== undefined ? data.refineMode : 0;
         let opBase = 108;
         for (let i = 0; i < 8; i++) {
             const start = opBase + i * 12;
@@ -608,6 +669,19 @@ export class WebGPURenderer {
         f32.set([...data.paletteD, 0], 28);
         
         u32[32] = data.colorSource;
+        f32[33] = data.curvatureScale;
+        f32[34] = data.curvatureExponent;
+        f32[35] = data.curvatureBias;
+
+        // Surface FX block
+        f32[36] = data.aoStrength !== undefined ? data.aoStrength : 0.0;
+        f32[37] = data.aoRadius !== undefined ? data.aoRadius : 1.6;
+        f32[38] = data.rimStrength !== undefined ? data.rimStrength : 0.0;
+        f32[39] = data.iridescence !== undefined ? data.iridescence : 0.0;
+        f32[40] = data.exposure !== undefined ? data.exposure : 1.15;
+        f32[41] = data.curvatureFilter !== undefined ? data.curvatureFilter : 1.5;
+        u32[42] = data.curvatureMode !== undefined ? data.curvatureMode : 0;
+        u32[43] = 0; // padding
 
         this.device.queue.writeBuffer(this.renderUniformBuffer, 0, this.renderUniformsData);
     }
@@ -646,7 +720,7 @@ export class WebGPURenderer {
     }
 
     // Run the Marching Cubes pipeline compute passes
-    runMarchingCubesCompute() {
+    runMarchingCubesCompute(refineMode = 0) {
         const gridX = this.mcGridX || 64;
         const gridY = this.mcGridY || 64;
         const gridZ = this.mcGridZ || 64;
@@ -679,12 +753,22 @@ export class WebGPURenderer {
         );
         mcPass.end();
 
-        // 4. Copy atomic counter value directly to the vertexCount field of indirect draw buffer
-        commandEncoder.copyBufferToBuffer(
-            this.mcAtomicCounterBuffer, 0,
-            this.mcIndirectDrawBuffer, 0,
-            4
-        );
+        // 4. Prep pass: writes clamped indirect draw args + refine dispatch args
+        const prepPass = commandEncoder.beginComputePass();
+        prepPass.setPipeline(this.mcPrepPipeline);
+        prepPass.setBindGroup(0, this.mcPrepBindGroup);
+        prepPass.dispatchWorkgroups(1);
+        prepPass.end();
+
+        // 5. Pass 2.5: True-field surface refinement (sub-voxel vertex
+        // snapping + micro-detail normals + 4D flow), if enabled
+        if (refineMode > 0) {
+            const refinePass = commandEncoder.beginComputePass();
+            refinePass.setPipeline(this.mcRefinePipeline);
+            refinePass.setBindGroup(0, this.mcRefineBindGroup);
+            refinePass.dispatchWorkgroupsIndirect(this.mcRefineDispatchBuffer, 0);
+            refinePass.end();
+        }
 
         this.device.queue.submit([commandEncoder.finish()]);
     }
@@ -732,7 +816,7 @@ export class WebGPURenderer {
                 if (mcParams) {
                     this.resizeMcBuffers(mcParams.gridX, mcParams.gridY, mcParams.gridZ, mcParams.budget);
                 }
-                this.runMarchingCubesCompute();
+                this.runMarchingCubesCompute(mcParams ? (mcParams.refineMode || 0) : 0);
                 this.mcNeedsRecompute = false;
             }
         } else {

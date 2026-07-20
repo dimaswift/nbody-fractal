@@ -71,12 +71,12 @@ struct Uniforms {
     inv_model_matrix: mat4x4f,
     fractal_pivot: vec4f,
     hollow_radius: f32,
-    pad_h0: f32,
+    normal_detail: f32,
     pad_h1: f32,
     pad_h2: f32,
 
     operator_count: u32,
-    pad_op0: u32,
+    refine_mode: u32,
     pad_op1: u32,
     pad_op2: u32,
     operators: array<ShapeOperator, 8>,
@@ -117,9 +117,17 @@ struct RenderUniforms {
     palette_c: vec4f,
     palette_d: vec4f,
     color_source: u32,
-    pad_a: u32,
-    pad_b: u32,
-    pad_c: u32,
+    curvature_scale: f32,
+    curvature_exponent: f32,
+    curvature_bias: f32,
+    ao_strength: f32,
+    ao_radius: f32,
+    rim_strength: f32,
+    iridescence: f32,
+    exposure: f32,
+    curvature_filter: f32,
+    curvature_mode: u32,
+    pad_r3: u32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -143,6 +151,11 @@ struct MCVertex {
 // Render pass bindings
 @group(0) @binding(7) var<storage, read> mc_vertices_render: array<MCVertex>;
 @group(0) @binding(8) var<uniform> mc_uniforms: Uniforms;
+@group(0) @binding(9) var<storage, read> volume_read: array<f32>;
+
+// Refinement pass bindings (indirect dispatch args + indirect draw args)
+@group(0) @binding(10) var<storage, read_write> refine_dispatch_args: array<u32, 3>;
+@group(0) @binding(11) var<storage, read_write> draw_args: array<u32, 4>;
 
 // --- PHYSICS UTILITIES ---
 
@@ -584,8 +597,32 @@ fn get_boolean_mask(p: vec3f) -> f32 {
             mask = max(mask, 1.0 - factor);
         }
     }
-    
+
     return mask;
+}
+
+// --- TRUE CONTINUOUS FIELD ---
+// Evaluates the exact same field as compute_volume, but at ANY continuous
+// point (the fractal has effectively infinite resolution — the voxel grid
+// only decides topology). w_offset probes the raw 4th dimension off the
+// temporal section, enabling true 4D derivatives.
+fn field_at(pos3: vec3f, w_offset: f32) -> f32 {
+    // Continuous-space replica of the voxel hollow-radius carve
+    if (uniforms.hollow_radius > 0.0) {
+        let size = vec3f(f32(uniforms.grid_size_x), f32(uniforms.grid_size_y), f32(uniforms.grid_size_z));
+        let L_h = uniforms.box_size;
+        let grid_f = (pos3 + L_h) / (2.0 * L_h) * (size - 1.0);
+        let center_vox = size / 2.0;
+        if (distance(grid_f, center_vox) < uniforms.hollow_radius) {
+            return 0.0;
+        }
+    }
+
+    let pos3_zoomed = (pos3 - uniforms.fractal_pivot.xyz) * uniforms.sampling_zoom + uniforms.fractal_pivot.xyz;
+    let w = eval_temporal(pos3_zoomed, 0.0);
+    let w_zoomed = (w - uniforms.fractal_pivot.w) * uniforms.sampling_zoom + uniforms.fractal_pivot.w;
+    let pos4 = vec4f(pos3_zoomed, w_zoomed + w_offset);
+    return EvaluateFractal(pos4) * get_boolean_mask(pos3);
 }
 
 // --- Pass 1: Grid Voxel Evaluation ---
@@ -604,22 +641,10 @@ fn compute_volume(@builtin(global_invocation_id) id: vec3u) {
     let grid_f = vec3f(id) / vec3f(f32(size_x - 1u), f32(size_y - 1u), f32(size_z - 1u));
     let pos3 = -L + 2.0 * L * grid_f;
     
-    // Calculate voxel distance to grid center
-    let center_vox = vec3f(f32(size_x) / 2.0, f32(size_y) / 2.0, f32(size_z) / 2.0);
-    let dist_vox = distance(vec3f(id), center_vox);
-    
-    var val = 0.0;
-    if (dist_vox >= uniforms.hollow_radius) {
-        // Apply sampling zoom and pivot
-        let pos3_zoomed = (pos3 - uniforms.fractal_pivot.xyz) * uniforms.sampling_zoom + uniforms.fractal_pivot.xyz;
-        
-        // Evaluate fractal
-        let w = eval_temporal(pos3_zoomed, 0.0);
-        let w_zoomed = (w - uniforms.fractal_pivot.w) * uniforms.sampling_zoom + uniforms.fractal_pivot.w;
-        let pos4 = vec4f(pos3_zoomed, w_zoomed);
-        val = EvaluateFractal(pos4) * get_boolean_mask(pos3);
-    }
-    
+    // field_at replicates the hollow-radius carve, sampling zoom/pivot,
+    // temporal mapping and boolean mask exactly.
+    let val = field_at(pos3, 0.0);
+
     let idx = id.x + id.y * size_x + id.z * size_x * size_y;
     volume[idx] = val;
 }
@@ -755,11 +780,158 @@ fn compute_marching_cubes(@builtin(global_invocation_id) id: vec3u) {
             } else {
                 norm = vec3f(0.0, 1.0, 0.0);
             }
-            
-            mc_vertices[write_idx + k].position = vec4f(p, isovalue);
+
+            // Grid-space gradient magnitude in world units (position.w).
+            // Used as the "Field Gradient" color source; overwritten with the
+            // true-field gradient by the refinement pass when enabled.
+            let cell = (2.0 * L) / vec3f(f32(size_x - 1u), f32(size_y - 1u), f32(size_z - 1u));
+            let grad_world = vec3f(nx, ny, nz) / (2.0 * cell);
+
+            mc_vertices[write_idx + k].position = vec4f(p, length(grad_world));
             mc_vertices[write_idx + k].normal = vec4f(norm, 0.0);
         }
     }
+}
+
+// --- Pass 2.5: True-Field Surface Refinement ---
+//
+// Marching cubes only knows the field through the voxel grid: vertex
+// positions are LINEAR interpolations along cell edges and normals are
+// grid-step central differences. But the underlying field is continuous
+// with effectively infinite resolution. This pass re-evaluates the real
+// field per vertex to:
+//   1. Snap each vertex onto the exact isosurface (bisection along the
+//      surface normal) — sub-voxel geometric accuracy.
+//   2. Rebuild normals from tiny-step central differences of the TRUE
+//      field — revealing micro-relief the grid cannot represent.
+//   3. Capture |grad f| (position.w) and the true 4D derivative df/dw
+//      (normal.w) for surface coloring.
+
+@compute @workgroup_size(1)
+fn prepare_refine_dispatch() {
+    let n = min(atomicLoad(&atomic_vertex_count), uniforms.max_vertices);
+
+    // Clamp the indirect draw args to the actually-written vertex range
+    // (the atomic counter can overshoot the budget).
+    draw_args[0] = n;
+    draw_args[1] = 1u;
+    draw_args[2] = 0u;
+    draw_args[3] = 0u;
+
+    // 2D dispatch to stay under the 65535 workgroups-per-dimension limit
+    let groups = (n + 127u) / 128u;
+    if (groups == 0u) {
+        refine_dispatch_args[0] = 1u;
+        refine_dispatch_args[1] = 1u;
+    } else {
+        let gx = min(groups, 65535u);
+        let gy = (groups + gx - 1u) / gx;
+        refine_dispatch_args[0] = gx;
+        refine_dispatch_args[1] = gy;
+    }
+    refine_dispatch_args[2] = 1u;
+}
+
+@compute @workgroup_size(128)
+fn refine_vertices(
+    @builtin(workgroup_id) wg: vec3u,
+    @builtin(num_workgroups) nwg: vec3u,
+    @builtin(local_invocation_index) li: u32
+) {
+    let vid = (wg.y * nwg.x + wg.x) * 128u + li;
+    let n = min(atomicLoad(&atomic_vertex_count), uniforms.max_vertices);
+    if (vid >= n || uniforms.refine_mode == 0u) {
+        return;
+    }
+
+    var p = mc_vertices[vid].position.xyz;
+    let iso = uniforms.isovalue;
+
+    let L = uniforms.box_size;
+    let cell = (2.0 * L) / vec3f(
+        f32(uniforms.grid_size_x - 1u),
+        f32(uniforms.grid_size_y - 1u),
+        f32(uniforms.grid_size_z - 1u)
+    );
+    let cell_min = min(cell.x, min(cell.y, cell.z));
+
+    // Downhill direction (field decreasing = outward). Stored normal is
+    // normal_sign * grad with normal_sign = -1 by default.
+    var dir = mc_vertices[vid].normal.xyz;
+    if (uniforms.invert_normals == 1u) {
+        dir = -dir;
+    }
+    if (length(dir) < 1e-6) {
+        dir = vec3f(0.0, 1.0, 0.0);
+    } else {
+        dir = normalize(dir);
+    }
+
+    // --- 1. Bracket & bisect the exact iso-crossing along the normal ---
+    let delta = cell_min * 0.6;
+    var t_a = -delta; // uphill side (expected inside: f >= iso)
+    var t_b = delta;  // downhill side (expected outside: f < iso)
+    var f_a = field_at(p + dir * t_a, 0.0);
+    var f_b = field_at(p + dir * t_b, 0.0);
+
+    // If the bracket is inverted (noisy normal), swap orientation
+    if (f_a < iso && f_b >= iso) {
+        let tmp_t = t_a; t_a = t_b; t_b = tmp_t;
+        let tmp_f = f_a; f_a = f_b; f_b = tmp_f;
+    }
+
+    if (f_a >= iso && f_b < iso) {
+        var bisect_steps = 4u;
+        if (uniforms.refine_mode >= 2u) {
+            bisect_steps = 7u;
+        }
+        for (var s = 0u; s < bisect_steps; s = s + 1u) {
+            let t_m = 0.5 * (t_a + t_b);
+            let f_m = field_at(p + dir * t_m, 0.0);
+            if (f_m >= iso) {
+                t_a = t_m;
+                f_a = f_m;
+            } else {
+                t_b = t_m;
+                f_b = f_m;
+            }
+        }
+        // Final secant step in log domain (the field spans decades)
+        let la = log(1.0 + max(f_a, 0.0));
+        let lb = log(1.0 + max(f_b, 0.0));
+        let li_iso = log(1.0 + max(iso, 0.0));
+        var t_final = 0.5 * (t_a + t_b);
+        if (abs(lb - la) > 1e-6) {
+            t_final = t_a + (t_b - t_a) * clamp((li_iso - la) / (lb - la), 0.0, 1.0);
+        }
+        p = p + dir * t_final;
+    }
+
+    // --- 2. True-field normal via tiny-h central differences ---
+    let h = max(cell_min * clamp(uniforms.normal_detail, 0.02, 2.0), 1e-6);
+    let gx = field_at(p + vec3f(h, 0.0, 0.0), 0.0) - field_at(p - vec3f(h, 0.0, 0.0), 0.0);
+    let gy = field_at(p + vec3f(0.0, h, 0.0), 0.0) - field_at(p - vec3f(0.0, h, 0.0), 0.0);
+    let gz = field_at(p + vec3f(0.0, 0.0, h), 0.0) - field_at(p - vec3f(0.0, 0.0, h), 0.0);
+    let grad = vec3f(gx, gy, gz) / (2.0 * h);
+
+    var normal_sign = -1.0;
+    if (uniforms.invert_normals == 1u) {
+        normal_sign = 1.0;
+    }
+    var new_normal = mc_vertices[vid].normal.xyz;
+    if (length(grad) > 1e-9) {
+        new_normal = normalize(normal_sign * grad);
+    }
+
+    // --- 3. True 4D flow: df/dw off the temporal section ---
+    // Positive = the field here grows as the 4D slice advances (surface
+    // expanding), negative = dissolving. A derivative that only exists
+    // because the object is four-dimensional.
+    let hw = max(cell_min * 0.5, 1e-5);
+    let dw = (field_at(p, hw) - field_at(p, -hw)) / (2.0 * hw);
+
+    mc_vertices[vid].position = vec4f(p, length(grad));
+    mc_vertices[vid].normal = vec4f(new_normal, dw);
 }
 
 // --- Pass 3: Isosurface Rendering ---
@@ -769,7 +941,117 @@ struct MCVertexOutput {
     @location(0) world_pos: vec3f,
     @location(1) normal: vec3f,
     @location(2) val: f32,
+    @location(3) local_pos: vec3f,
+    @location(4) local_normal: vec3f,
+    @location(5) wflow: f32,
 };
+
+fn read_vol(x: u32, y: u32, z: u32) -> f32 {
+    let cx = clamp(x, 0u, mc_uniforms.grid_size_x - 1u);
+    let cy = clamp(y, 0u, mc_uniforms.grid_size_y - 1u);
+    let cz = clamp(z, 0u, mc_uniforms.grid_size_z - 1u);
+    let idx = cz * mc_uniforms.grid_size_x * mc_uniforms.grid_size_y + cy * mc_uniforms.grid_size_x + cx;
+    return volume_read[idx];
+}
+
+fn sample_volume(pos: vec3f) -> f32 {
+    let grid_pos = (pos + vec3f(mc_uniforms.box_size)) / (2.0 * mc_uniforms.box_size);
+    let size = vec3f(
+        f32(mc_uniforms.grid_size_x),
+        f32(mc_uniforms.grid_size_y),
+        f32(mc_uniforms.grid_size_z)
+    );
+    
+    let p = clamp(grid_pos * (size - vec3f(1.0)), vec3f(0.0), size - vec3f(1.01));
+    
+    let i0 = u32(p.x);
+    let j0 = u32(p.y);
+    let k0 = u32(p.z);
+    
+    let i1 = i0 + 1u;
+    let j1 = j0 + 1u;
+    let k1 = k0 + 1u;
+    
+    let tx = p.x - f32(i0);
+    let ty = p.y - f32(j0);
+    let tz = p.z - f32(k0);
+    
+    let c000 = read_vol(i0, j0, k0);
+    let c100 = read_vol(i1, j0, k0);
+    let c010 = read_vol(i0, j1, k0);
+    let c110 = read_vol(i1, j1, k0);
+    let c001 = read_vol(i0, j0, k1);
+    let c101 = read_vol(i1, j0, k1);
+    let c011 = read_vol(i0, j1, k1);
+    let c111 = read_vol(i1, j1, k1);
+    
+    let c00 = mix(c000, c100, tx);
+    let c10 = mix(c010, c110, tx);
+    let c01 = mix(c001, c101, tx);
+    let c11 = mix(c011, c111, tx);
+    
+    let c0 = mix(c00, c10, ty);
+    let c1 = mix(c01, c11, ty);
+    
+    return mix(c0, c1, tz);
+}
+
+fn get_volume_normal_with_h(pos: vec3f, h: f32) -> vec3f {
+    let nx = sample_volume(pos + vec3f(h, 0.0, 0.0)) - sample_volume(pos - vec3f(h, 0.0, 0.0));
+    let ny = sample_volume(pos + vec3f(0.0, h, 0.0)) - sample_volume(pos - vec3f(0.0, h, 0.0));
+    let nz = sample_volume(pos + vec3f(0.0, 0.0, h)) - sample_volume(pos - vec3f(0.0, 0.0, h));
+    
+    let len = length(vec3f(nx, ny, nz));
+    if (len > 1e-5) {
+        return vec3f(nx, ny, nz) / len;
+    }
+    return vec3f(0.0, 0.0, 1.0);
+}
+
+fn get_volume_curvature(pos: vec3f) -> f32 {
+    let step_x = 2.0 * mc_uniforms.box_size / f32(mc_uniforms.grid_size_x);
+    var filter_width = render_uniforms.curvature_filter;
+    if (filter_width <= 0.0) {
+        filter_width = 1.5;
+    }
+    let h = step_x * filter_width;
+    let step_normal = h * 0.8;
+    
+    let n_xp = get_volume_normal_with_h(pos + vec3f(h, 0.0, 0.0), step_normal);
+    let n_xm = get_volume_normal_with_h(pos - vec3f(h, 0.0, 0.0), step_normal);
+    
+    let n_yp = get_volume_normal_with_h(pos + vec3f(0.0, h, 0.0), step_normal);
+    let n_ym = get_volume_normal_with_h(pos - vec3f(0.0, h, 0.0), step_normal);
+    
+    let n_zp = get_volume_normal_with_h(pos + vec3f(0.0, 0.0, h), step_normal);
+    let n_zm = get_volume_normal_with_h(pos - vec3f(0.0, 0.0, h), step_normal);
+    
+    let dx = (n_xp - n_xm) / (2.0 * h);
+    let dy = (n_yp - n_ym) / (2.0 * h);
+    let dz = (n_zp - n_zm) / (2.0 * h);
+    
+    return dx.x + dy.y + dz.z;
+}
+
+fn get_volume_laplacian(pos: vec3f) -> f32 {
+    let step_x = 2.0 * mc_uniforms.box_size / f32(mc_uniforms.grid_size_x);
+    var filter_width = render_uniforms.curvature_filter;
+    if (filter_width <= 0.0) {
+        filter_width = 1.5;
+    }
+    let h = step_x * filter_width;
+    
+    let c = sample_volume(pos);
+    let xp = sample_volume(pos + vec3f(h, 0.0, 0.0));
+    let xm = sample_volume(pos - vec3f(h, 0.0, 0.0));
+    let yp = sample_volume(pos + vec3f(0.0, h, 0.0));
+    let ym = sample_volume(pos - vec3f(0.0, h, 0.0));
+    let zp = sample_volume(pos + vec3f(0.0, 0.0, h));
+    let zm = sample_volume(pos - vec3f(0.0, 0.0, h));
+    
+    let lap = (xp + xm + yp + ym + zp + zm - 6.0 * c) / (h * h);
+    return lap;
+}
 
 @vertex
 fn mc_vertex_main(@builtin(vertex_index) vid: u32) -> MCVertexOutput {
@@ -812,38 +1094,136 @@ fn mc_vertex_main(@builtin(vertex_index) vid: u32) -> MCVertexOutput {
     out.world_pos = rotated_pos;
     out.normal = rotated_normal;
     out.val = v.position.w;
+    out.local_pos = v.position.xyz;
+    out.local_normal = v.normal.xyz;
+    out.wflow = v.normal.w;
     return out;
+}
+
+// ACES filmic tone mapping (Narkowicz approximation)
+fn aces_tonemap(x: vec3f) -> vec3f {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3f(0.0), vec3f(1.0));
+}
+
+// Volume-sampled ambient occlusion: step outward along the surface normal
+// through the density volume. In creases and folds the field stays above
+// the isovalue just outside the surface -> occluded.
+fn volume_ao(local_pos: vec3f, local_normal: vec3f) -> f32 {
+    if (render_uniforms.ao_strength <= 0.001) {
+        return 1.0;
+    }
+
+    let cell = 2.0 * mc_uniforms.box_size / f32(mc_uniforms.grid_size_x);
+    let radius = max(render_uniforms.ao_radius, 0.05) * cell;
+    let log_iso = log(1.0 + max(mc_uniforms.isovalue, 0.0));
+
+    var occ = 0.0;
+    var wsum = 0.0;
+    var w = 1.0;
+    var dists = array<f32, 5>(0.35, 0.8, 1.5, 2.6, 4.2);
+
+    for (var i = 0u; i < 5u; i = i + 1u) {
+        let d = dists[i] * radius;
+        let s = sample_volume(local_pos + local_normal * d);
+        // Relative log-density above the surface level (field spans decades)
+        var rel = log(1.0 + max(s, 0.0)) / max(log_iso, 1e-4) - 1.0;
+        // With inverted normals the interior is the LOW-field side
+        if (mc_uniforms.invert_normals == 1u) {
+            rel = -rel;
+        }
+        occ = occ + w * clamp(rel, 0.0, 1.0);
+        wsum = wsum + w;
+        w = w * 0.72;
+    }
+
+    let ao = 1.0 - render_uniforms.ao_strength * (occ / wsum) * 1.6;
+    return clamp(ao, 0.0, 1.0);
 }
 
 @fragment
 fn mc_fragment_main(in: MCVertexOutput) -> @location(0) vec4f {
-    // Coloring
-    // Coloring source: 0 = Distance from Center, 1 = Surface Curvature
+    let N = normalize(in.normal);
+    let V = normalize(mc_uniforms.camera_pos.xyz - in.world_pos);
+    let NdotV = max(dot(N, V), 0.0);
+    let iso_n = 1.0 + max(mc_uniforms.isovalue, 0.0);
+
+    // --- Color mapping source ---
+    // 0 = Distance from Center      1 = Surface Curvature (volume)
+    // 2 = Field Gradient |grad f|   3 = 4D Flow df/dw (true 4D derivative)
+    // 4 = Normal Orientation Hue
     var t = 0.0;
     if (render_uniforms.color_source == 1u) {
-        let dx = dpdx(in.normal);
-        let dy = dpdy(in.normal);
-        let curvature = length(dx) + length(dy);
-        t = curvature * render_uniforms.gradient_scale + render_uniforms.gradient_phase;
+        var raw_curvature = 0.0;
+        let c_mode = render_uniforms.curvature_mode;
+        if (c_mode == 0u) {
+            raw_curvature = abs(get_volume_curvature(in.local_pos));
+        } else if (c_mode == 1u) {
+            raw_curvature = get_volume_laplacian(in.local_pos);
+        } else {
+            raw_curvature = abs(get_volume_laplacian(in.local_pos));
+        }
+        
+        var adjusted_curvature = 0.0;
+        if (raw_curvature < 0.0) {
+            adjusted_curvature = -pow(abs(raw_curvature) * render_uniforms.curvature_scale, render_uniforms.curvature_exponent) + render_uniforms.curvature_bias;
+        } else {
+            adjusted_curvature = pow(raw_curvature * render_uniforms.curvature_scale, render_uniforms.curvature_exponent) + render_uniforms.curvature_bias;
+        }
+        t = adjusted_curvature * render_uniforms.gradient_scale + render_uniforms.gradient_phase;
+    } else if (render_uniforms.color_source == 2u) {
+        // Steepness of the dynamical transition across the surface
+        let g_rel = in.val / iso_n;
+        t = log(1.0 + g_rel) * render_uniforms.gradient_scale + render_uniforms.gradient_phase;
+    } else if (render_uniforms.color_source == 3u) {
+        // Signed growth/dissolution rate along the 4th dimension
+        let w_rel = in.wflow / iso_n;
+        t = 0.5 + 0.5 * tanh(w_rel * render_uniforms.gradient_scale) + render_uniforms.gradient_phase;
+    } else if (render_uniforms.color_source == 4u) {
+        // Hue from normal orientation (matcap-like)
+        t = (atan2(N.x, N.z) * 0.15915494 + 0.5 + 0.25 * N.y) * render_uniforms.gradient_scale + render_uniforms.gradient_phase;
     } else {
         t = length(in.world_pos) * render_uniforms.gradient_scale + render_uniforms.gradient_phase;
     }
-    let a = render_uniforms.palette_a.xyz;
-    let b = render_uniforms.palette_b.xyz;
-    let c = render_uniforms.palette_c.xyz;
-    let d = render_uniforms.palette_d.xyz;
-    let color = a + b * cos(2.0 * 3.14159265 * (c * t + d));
-    
-    // Normal-mapped diffuse + specular lighting
-    let N = normalize(in.normal);
-    let V = normalize(mc_uniforms.camera_pos.xyz - in.world_pos);
-    let L = normalize(render_uniforms.light_pos.xyz - in.world_pos);
-    let H = normalize(L + V);
-    
-    let ambient = render_uniforms.ambient;
-    let diff = render_uniforms.diffuse * max(dot(N, L), 0.0);
+
+    // Iridescence: fresnel-driven palette phase shift (thin-film look)
+    let fres = pow(1.0 - NdotV, 2.0);
+    t = t + render_uniforms.iridescence * 0.35 * fres;
+
+    let base_color = cos_palette(t);
+
+    // --- Ambient occlusion from the density volume ---
+    let n_local = normalize(in.local_normal);
+    let ao = volume_ao(in.local_pos, n_local);
+    let ao_soft = 0.4 + 0.6 * ao;
+
+    // --- Lighting: key + fill + hemisphere ambient + specular + rim ---
+    let Ld = normalize(render_uniforms.light_pos.xyz - in.world_pos);
+    let H = normalize(Ld + V);
+
+    let key_diff = render_uniforms.diffuse * max(dot(N, Ld), 0.0);
+
+    let fill_dir = normalize(vec3f(-0.45, 0.2, -0.85));
+    let fill_diff = 0.25 * render_uniforms.diffuse * max(dot(N, fill_dir), 0.0);
+
+    let hemi = 0.65 + 0.35 * N.y;
+    let ambient = render_uniforms.ambient * hemi;
+
     let spec = render_uniforms.specular * pow(max(dot(N, H), 0.0), render_uniforms.shininess);
-    
-    let final_color = color * (diff + ambient) + vec3f(spec);
+
+    let rim = render_uniforms.rim_strength * pow(1.0 - NdotV, 3.0) * (0.25 + 0.75 * ao);
+    let rim_color = mix(vec3f(1.0), base_color, 0.4);
+
+    var final_color = base_color * (key_diff * ao_soft + fill_diff * ao + ambient * ao)
+        + vec3f(spec) * (0.25 + 0.75 * ao)
+        + rim_color * rim;
+
+    // --- Filmic tone mapping ---
+    final_color = aces_tonemap(final_color * max(render_uniforms.exposure, 0.01));
+
     return vec4f(final_color, 1.0);
 }
