@@ -496,6 +496,11 @@ input:focus {
   color: var(--danger);
 }
 
+.badge-stale {
+  background: rgba(255, 176, 32, 0.16);
+  color: var(--warn);
+}
+
 .warn {
   color: var(--warn);
 }

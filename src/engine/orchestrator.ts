@@ -89,6 +89,8 @@ export async function startOrchestrator(): Promise<void> {
   for (const v of store.getState().volumes) dirty.add(v.id);
   scheduleFull();
 
+  let interactionVolumeId: string | null = null;
+
   store.subscribe((s) => {
     const cur = pickSlice(s);
 
@@ -104,32 +106,43 @@ export async function startOrchestrator(): Promise<void> {
       }
     }
 
-    // field / global change -> all volumes dirty
-    const fieldChanged =
-      cur.fieldJson !== prev.fieldJson || cur.specialize !== prev.specialize || cur.nonce !== prev.nonce;
-    if (fieldChanged) for (const id of cur.volumeIds) dirty.add(id);
+    // Manual "conform all" (extractNonce) or specialize toggle -> all volumes.
+    if (cur.nonce !== prev.nonce || cur.specialize !== prev.specialize) {
+      for (const id of cur.volumeIds) dirty.add(id);
+    }
 
-    // per-volume sampling change -> that volume dirty
+    // A volume's own sampling change re-extracts THAT volume (responsive edit).
     for (const id of cur.volumeIds) {
-      if (cur.samplingJson[id] !== undefined && cur.samplingJson[id] !== prev.samplingJson[id]) {
+      if (prev.samplingJson[id] !== undefined && cur.samplingJson[id] !== prev.samplingJson[id]) {
         dirty.add(id);
+        if (cur.isInteracting) interactionVolumeId = id;
       }
     }
+
+    // NOTE: a field change (cur.fieldJson) intentionally enqueues NOTHING —
+    // volumes are marked stale (fieldNonce) and wait for an explicit Conform.
 
     const justReleased = prev.isInteracting && !cur.isInteracting;
     prev = cur;
 
     if (cur.isInteracting) {
-      // preview only the active volume while dragging
       if (dirty.size > 0) {
         dirty.clear();
         schedulePreview();
       }
-    } else if (dirty.size > 0 || justReleased) {
-      if (justReleased) dirty.add(getActiveVolume(s).id);
-      scheduleFull();
+    } else {
+      // full-extract on release only if a volume was actually dragged
+      if (justReleased && interactionVolumeId) dirty.add(interactionVolumeId);
+      interactionVolumeId = null;
+      if (dirty.size > 0) scheduleFull();
     }
   });
+}
+
+/** Explicitly re-extract one volume against the current field (Conform). */
+export function conformVolume(volumeId: string) {
+  dirty.add(volumeId);
+  void processQueue();
 }
 
 interface Slice {
@@ -190,6 +203,7 @@ function runFull(vol: Volume): Promise<void> {
   if (!extractor) return Promise.resolve();
   currentHandle?.cancel();
   const s = useStore.getState();
+  const nonce = s.fieldNonce; // stamp: this volume is conformed to THIS field
   const req: ExtractionRequest = { field: s.field, sampling: vol.sampling, specialize: s.specialize };
   const setState = s.set;
   const bus = getMeshBus(vol.id);
@@ -206,6 +220,7 @@ function runFull(vol: Volume): Promise<void> {
     onDone: (mesh, stats) => {
       lastBounds.set(vol.id, stats.bounds ?? lastBounds.get(vol.id) ?? null);
       setState({ stats, phase: 'done' });
+      useStore.getState().updateVolume(vol.id, { conformedNonce: nonce });
       if (mesh) bus.publish(mesh);
     },
     onError: (err) => {

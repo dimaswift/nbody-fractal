@@ -53,6 +53,8 @@ export interface Volume {
   position: Vec3;
   rotation: Vec4;
   scale: Vec3;
+  /** fieldNonce this volume was last extracted at; < current fieldNonce => stale */
+  conformedNonce: number;
 }
 
 export interface TrajectoryProbe {
@@ -73,6 +75,8 @@ export type GizmoMode = 'translate' | 'rotate' | 'scale';
 
 export interface AppState {
   field: FieldParams;
+  /** bumped on ANY field change; volumes stamped below this value are stale */
+  fieldNonce: number;
   volumes: Volume[];
   activeVolumeId: string;
 
@@ -230,6 +234,7 @@ export const defaultVolume = (name: string): Volume => ({
   position: [0, 0, 0],
   rotation: [0, 0, 0, 1],
   scale: [1, 1, 1],
+  conformedNonce: 0,
 });
 
 /** Deep clone a volume with fresh ids (operators get new ids too). */
@@ -245,6 +250,7 @@ function cloneVolume(v: Volume, name: string): Volume {
     position: [...v.position] as Vec3,
     rotation: [...v.rotation] as Vec4,
     scale: [...v.scale] as Vec3,
+    conformedNonce: v.conformedNonce,
   };
 }
 
@@ -274,6 +280,7 @@ function patchActive(s: AppState, fn: (v: Volume) => Volume): Partial<AppState> 
 
 export const useStore = create<AppState>((set) => ({
   field: defaultField(),
+  fieldNonce: 0,
   volumes: [firstVolume],
   activeVolumeId: firstVolume.id,
 
@@ -297,7 +304,7 @@ export const useStore = create<AppState>((set) => ({
   gpuError: null,
   extractNonce: 0,
 
-  setField: (patch) => set((s) => ({ field: { ...s.field, ...patch } })),
+  setField: (patch) => set((s) => ({ field: { ...s.field, ...patch }, fieldNonce: s.fieldNonce + 1 })),
   setSampling: (patch) =>
     set((s) => patchActive(s, (v) => ({ ...v, sampling: { ...v.sampling, ...patch } }))),
   setShading: (patch) =>
@@ -307,27 +314,31 @@ export const useStore = create<AppState>((set) => ({
   updateSeed: (index, patch) =>
     set((s) => {
       const seeds = s.field.seeds.map((seed, i) => (i === index ? { ...seed, ...patch } : seed));
-      return { field: { ...s.field, seeds } };
+      return { field: { ...s.field, seeds }, fieldNonce: s.fieldNonce + 1 };
     }),
 
   addSeed: () =>
     set((s) => {
       if (s.field.seeds.length >= 32) return {};
       const seeds = [...s.field.seeds, { position: [0.2, 0.2, 0.2, 0] as Vec4, mass: 1.0 }];
-      return { field: { ...s.field, seeds }, selection: { kind: 'seed', index: seeds.length - 1 } };
+      return {
+        field: { ...s.field, seeds },
+        fieldNonce: s.fieldNonce + 1,
+        selection: { kind: 'seed', index: seeds.length - 1 },
+      };
     }),
 
   removeSeed: (index) =>
     set((s) => {
       const seeds = s.field.seeds.filter((_, i) => i !== index);
-      return { field: { ...s.field, seeds }, selection: { kind: 'none' } };
+      return { field: { ...s.field, seeds }, fieldNonce: s.fieldNonce + 1, selection: { kind: 'none' } };
     }),
 
   loadSeedPreset: (name) =>
     set((s) => {
       const seeds = name === 'random' ? randomSeeds() : structuredClone(SEED_PRESETS[name]);
       if (!seeds) return {};
-      return { field: { ...s.field, seeds }, selection: { kind: 'none' } };
+      return { field: { ...s.field, seeds }, fieldNonce: s.fieldNonce + 1, selection: { kind: 'none' } };
     }),
 
   addOperator: (shapeType = ShapeType.Sphere, opType = OpType.Subtract) =>
@@ -369,6 +380,7 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       const active = s.volumes.find((v) => v.id === s.activeVolumeId) ?? s.volumes[0];
       const clone = cloneVolume(active, `Volume ${s.volumes.length + 1}`);
+      clone.conformedNonce = s.fieldNonce; // will extract on add and stay fresh
       return { volumes: [...s.volumes, clone], activeVolumeId: clone.id, selection: { kind: 'none' } };
     }),
 
@@ -409,7 +421,7 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       const sequenceValues = s.field.sequenceValues.slice();
       sequenceValues[index] = value;
-      return { field: { ...s.field, sequenceValues } };
+      return { field: { ...s.field, sequenceValues }, fieldNonce: s.fieldNonce + 1 };
     }),
 }));
 
@@ -419,6 +431,10 @@ export const useStore = create<AppState>((set) => ({
 
 export const getActiveVolume = (s: AppState): Volume =>
   s.volumes.find((v) => v.id === s.activeVolumeId) ?? s.volumes[0];
+
+/** A volume is stale when it was last extracted against an older field. */
+export const isVolumeStale = (v: Volume, fieldNonce: number): boolean =>
+  v.conformedNonce !== fieldNonce;
 
 /** Hook: the active volume (re-renders when it changes). */
 export const useActiveVolume = (): Volume => useStore(getActiveVolume);

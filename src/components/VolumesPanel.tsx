@@ -2,21 +2,24 @@
 // hide / rename / export. The Sampling, Operators and Shading panels below
 // always edit the ACTIVE (selected) volume.
 
-import { snapshotVolumeMesh } from '../engine/orchestrator';
+import { conformVolume, snapshotVolumeMesh } from '../engine/orchestrator';
 import { meshToStl } from '../engine/stlExport';
 import { downloadBlob } from '../state/persistence';
-import { useStore } from '../state/store';
+import { isVolumeStale, useStore } from '../state/store';
 import { Button, Section } from './controls';
 
 export function VolumesPanel() {
   const volumes = useStore((s) => s.volumes);
   const activeId = useStore((s) => s.activeVolumeId);
+  const fieldNonce = useStore((s) => s.fieldNonce);
   const selection = useStore((s) => s.selection);
   const addVolume = useStore((s) => s.addVolume);
   const removeVolume = useStore((s) => s.removeVolume);
   const selectVolume = useStore((s) => s.selectVolume);
   const updateVolume = useStore((s) => s.updateVolume);
   const select = useStore((s) => s.select);
+
+  const anyStale = volumes.some((v) => isVolumeStale(v, fieldNonce));
 
   const exportVolume = (id: string, name: string) => {
     const snap = snapshotVolumeMesh(id);
@@ -36,10 +39,20 @@ export function VolumesPanel() {
         <Button variant="primary" onClick={addVolume}>
           + Add volume
         </Button>
+        {anyStale && (
+          <Button
+            variant="primary"
+            title="Re-extract every stale volume against the current field"
+            onClick={() => volumes.forEach((v) => isVolumeStale(v, fieldNonce) && conformVolume(v.id))}
+          >
+            ⟳ Conform all
+          </Button>
+        )}
       </div>
       {volumes.map((v) => {
         const active = v.id === activeId;
         const selected = selection.kind === 'volume' && selection.id === v.id;
+        const stale = isVolumeStale(v, fieldNonce);
         return (
           <div
             key={v.id}
@@ -63,7 +76,20 @@ export function VolumesPanel() {
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => updateVolume(v.id, { name: e.target.value })}
               />
+              {stale && <span className="badge badge-stale">stale</span>}
               {active && <span className="hint">editing</span>}
+              {stale && (
+                <button
+                  className="btn btn-primary"
+                  title="Re-extract this volume against the current field"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    conformVolume(v.id);
+                  }}
+                >
+                  ⟳ Conform
+                </button>
+              )}
               <button
                 className="btn btn-ghost"
                 title="Export STL (with transform)"

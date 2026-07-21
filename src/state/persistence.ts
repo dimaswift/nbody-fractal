@@ -66,6 +66,8 @@ export function applyConfig(cfg: StudioConfig) {
   // Operators moved from field to per-volume; drop any legacy field.operators.
   delete (field as { operators?: unknown }).operators;
 
+  const fieldNonce = useStore.getState().fieldNonce + 1;
+
   let volumes: Volume[];
   if (cfg.volumes && cfg.volumes.length > 0) {
     volumes = cfg.volumes.map((v) => ({
@@ -73,6 +75,7 @@ export function applyConfig(cfg: StudioConfig) {
       ...v,
       sampling: { ...defaultSampling(), ...v.sampling },
       shading: { ...defaultShading(), ...v.shading },
+      conformedNonce: fieldNonce, // fresh relative to the loaded field
     }));
   } else {
     // legacy v2: build a single volume from the config's sampling+shading,
@@ -88,11 +91,12 @@ export function applyConfig(cfg: StudioConfig) {
           operators: legacyOps ?? cfg.sampling?.operators ?? defaultSampling().operators,
         },
         shading: { ...defaultShading(), ...cfg.shading },
+        conformedNonce: fieldNonce,
       },
     ];
   }
 
-  store.set({ field, volumes, activeVolumeId: volumes[0].id, selection: { kind: 'none' } });
+  store.set({ field, fieldNonce, volumes, activeVolumeId: volumes[0].id, selection: { kind: 'none' } });
   store.requestExtract();
 }
 

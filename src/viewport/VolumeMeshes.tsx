@@ -3,7 +3,8 @@
 // can pull volumes apart to inspect a plug/socket fit. Select a volume to move
 // it with the gizmo.
 
-import { TransformControls } from '@react-three/drei';
+import { Billboard, TransformControls } from '@react-three/drei';
+import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo } from 'react';
 import {
   BufferGeometry,
@@ -13,9 +14,9 @@ import {
 } from 'three';
 import { getMeshBus } from '../engine/orchestrator';
 import { FLOATS_PER_VERTEX, type MeshUpdate } from '../engine/types';
-import { useStore, type Volume } from '../state/store';
+import { isVolumeStale, useStore, type Volume } from '../state/store';
 import { applyShading, createFractalMaterial } from './fractalMaterial';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 
 export function updateGeometryFromMesh(geometry: BufferGeometry, mesh: MeshUpdate) {
   const existing = geometry.getAttribute('position') as InterleavedBufferAttribute | undefined;
@@ -43,6 +44,29 @@ export function updateGeometryFromMesh(geometry: BufferGeometry, mesh: MeshUpdat
   geometry.computeBoundingSphere();
 }
 
+/** Small pulsing amber marker floating above a stale volume. */
+function StaleMarker({ position }: { position: [number, number, number] }) {
+  const ref = useRef<Group>(null);
+  useFrame((state) => {
+    const s = 1 + 0.18 * Math.sin(state.clock.elapsedTime * 4);
+    ref.current?.scale.setScalar(s);
+  });
+  return (
+    <Billboard position={position}>
+      <group ref={ref}>
+        <mesh raycast={() => null}>
+          <ringGeometry args={[0.09, 0.13, 24]} />
+          <meshBasicMaterial color="#ffb020" transparent opacity={0.9} depthTest={false} />
+        </mesh>
+        <mesh raycast={() => null}>
+          <circleGeometry args={[0.05, 6]} />
+          <meshBasicMaterial color="#ffb020" depthTest={false} />
+        </mesh>
+      </group>
+    </Billboard>
+  );
+}
+
 function VolumeMesh({ volume, selected }: { volume: Volume; selected: boolean }) {
   const ref = useRef<Group>(null);
   const geometry = useMemo(() => new BufferGeometry(), []);
@@ -52,13 +76,20 @@ function VolumeMesh({ volume, selected }: { volume: Volume; selected: boolean })
   const updateVolume = useStore((s) => s.updateVolume);
   const setState = useStore((s) => s.set);
   const gizmoMode = useStore((s) => s.gizmoMode);
+  const stale = useStore((s) => isVolumeStale(volume, s.fieldNonce));
+  // top of the mesh's bounding sphere, in the volume's local frame (for the marker)
+  const [markerTop, setMarkerTop] = useState<[number, number, number]>([0, 1.8, 0]);
 
   useEffect(() => {
     applyShading(material, volume.shading, volume.sampling.isovalue);
   }, [material, volume.shading, volume.sampling.isovalue]);
 
   useEffect(() => {
-    const unsub = getMeshBus(volume.id).subscribe((mesh) => updateGeometryFromMesh(geometry, mesh));
+    const unsub = getMeshBus(volume.id).subscribe((mesh) => {
+      updateGeometryFromMesh(geometry, mesh);
+      const bs = geometry.boundingSphere;
+      if (bs) setMarkerTop([bs.center.x, bs.center.y + bs.radius + 0.12, bs.center.z]);
+    });
     return () => unsub();
   }, [geometry, volume.id]);
 
@@ -103,6 +134,8 @@ function VolumeMesh({ volume, selected }: { volume: Volume; selected: boolean })
             select({ kind: 'volume', id: volume.id });
           }}
         />
+        {/* stale indicator: amber diamond floating above the mesh */}
+        {stale && <StaleMarker position={markerTop} />}
       </group>
       {selected && (
         <TransformControls
