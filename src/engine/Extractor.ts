@@ -228,28 +228,28 @@ export class Extractor {
       engine.writeBricks(dispatches);
       writeUniforms(wave.length);
       engine.clearFlags(wave.length);
-      engine.device.queue.submit([engine.encodeWave(pipes, wave.length, isFlood)]);
+      engine.device.queue.submit([engine.encodeWave(pipes, wave.length)]);
 
       const { count, flags } = await engine.readWaveResults(wave.length);
       gpuCount = count;
       stats.bricksEvaluated += wave.length;
 
-      if (isFlood) {
-        for (let i = 0; i < wave.length; i++) {
-          const f = flags[i];
-          const hasSurface = (f & (1 << 12)) !== 0 && (f & (1 << 13)) !== 0;
-          if (hasSurface) growBounds(bounds, wave[i], brickWorld);
-          for (let face = 0; face < 6; face++) {
-            const above = (f >> (2 * face)) & 1;
-            const below = (f >> (2 * face + 1)) & 1;
-            if (above && below) {
-              const d = FACE_DELTAS[face];
-              push({ x: wave[i].x + d[0], y: wave[i].y + d[1], z: wave[i].z + d[2] });
-            }
+      for (let i = 0; i < wave.length; i++) {
+        const f = flags[i];
+        // Bounds track only bricks that actually contain surface — in box
+        // mode too, so result bounds stay tight around the structure instead
+        // of inflating to the whole evaluated box.
+        const hasSurface = (f & (1 << 12)) !== 0 && (f & (1 << 13)) !== 0;
+        if (hasSurface) growBounds(bounds, wave[i], brickWorld);
+        if (!isFlood) continue;
+        for (let face = 0; face < 6; face++) {
+          const above = (f >> (2 * face)) & 1;
+          const below = (f >> (2 * face + 1)) & 1;
+          if (above && below) {
+            const d = FACE_DELTAS[face];
+            push({ x: wave[i].x + d[0], y: wave[i].y + d[1], z: wave[i].z + d[2] });
           }
         }
-      } else {
-        for (const b of wave) growBounds(bounds, b, brickWorld);
       }
 
       stats.budgetHit = gpuCount >= maxVertices;

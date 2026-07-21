@@ -435,7 +435,7 @@ export class GpuEngine {
   // Dispatch helpers
   // --------------------------------------------------------------------------
 
-  encodeWave(pipes: PipelineSet, waveCount: number, withFlags: boolean): GPUCommandBuffer {
+  encodeWave(pipes: PipelineSet, waveCount: number): GPUCommandBuffer {
     const encoder = this.device.createCommandEncoder({ label: 'wave' });
     const pass = encoder.beginComputePass();
     pass.setBindGroup(0, this.bindGroup);
@@ -443,10 +443,10 @@ export class GpuEngine {
     pass.setPipeline(pipes.brickVolume);
     pass.dispatchWorkgroups(9 * waveCount, 9, 9);
 
-    if (withFlags) {
-      pass.setPipeline(pipes.brickFlags);
-      pass.dispatchWorkgroups(waveCount, 1, 1);
-    }
+    // Flags run in every mode: flood uses them to propagate, box mode uses
+    // the has-surface bits for tight result bounds.
+    pass.setPipeline(pipes.brickFlags);
+    pass.dispatchWorkgroups(waveCount, 1, 1);
 
     pass.setPipeline(pipes.brickMc);
     pass.dispatchWorkgroups(8 * waveCount, 8, 8);
@@ -454,9 +454,7 @@ export class GpuEngine {
 
     // Snapshot counter + flags for readback in the same submission
     encoder.copyBufferToBuffer(this.counterBuffer, 0, this.waveReadback, 0, 4);
-    if (withFlags) {
-      encoder.copyBufferToBuffer(this.flagsBuffer, 0, this.waveReadback, 4, waveCount * 4);
-    }
+    encoder.copyBufferToBuffer(this.flagsBuffer, 0, this.waveReadback, 4, waveCount * 4);
     return encoder.finish();
   }
 

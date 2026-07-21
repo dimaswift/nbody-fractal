@@ -177,12 +177,15 @@ function run(preview: boolean) {
       if (phase !== 'cancelled') setState({ phase });
     },
     onMesh: (mesh, stats) => {
-      lastBounds = stats.bounds ?? lastBounds;
+      // Previews must never feed lastBounds: a preview's bounds are derived
+      // FROM lastBounds, and writing them back compounds the brick snap +
+      // margin every tick — the runaway that coarsened drags into a cube.
+      if (!preview) lastBounds = stats.bounds ?? lastBounds;
       setState({ stats });
       liveMesh.publish(mesh);
     },
     onDone: (mesh, stats) => {
-      lastBounds = stats.bounds ?? lastBounds;
+      if (!preview) lastBounds = stats.bounds ?? lastBounds;
       setState({ stats, phase: 'done' });
       if (mesh) liveMesh.publish(mesh);
     },
