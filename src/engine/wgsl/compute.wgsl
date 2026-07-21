@@ -88,7 +88,8 @@ struct Uniforms {
     simplex_count: u32,     // 164  N vertices of the simplex (== BODY_COUNT)
     simplex_scale: f32,     // 168  embedding scale of the sample into simplex space
     simplex_offset: f32,    // 172  embedding offset (baseline along each axis)
-    operators: array<ShapeOperator, 8>, // 176 .. 816
+    simplex_modes: vec4f,   // 176  DCT mode k mapped to x, y, z, w axes
+    operators: array<ShapeOperator, 8>, // 192 .. 832
 };
 
 struct Seed {
@@ -193,14 +194,18 @@ fn EvaluateFractal(initial_pos: vec4f) -> f32 {
         // Then, exactly as the legacy diagonal init, each body collapses onto
         // the 4D main diagonal at val_i = density / exp(d_i).
         let Nf = f32(BODY_COUNT);
+        let m = uniforms.simplex_modes;
         var q: array<f32, BODY_COUNT>;
         var q2 = 0.0;
         for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
             let fi = (f32(i) + 0.5) / Nf;
-            let e1 = cos(PI * fi);
-            let e2 = cos(2.0 * PI * fi);
-            let e3 = cos(3.0 * PI * fi);
-            let e4 = cos(4.0 * PI * fi);
+            // Each sample axis drives one DCT mode e_k[i] = cos(PI*k*fi). The
+            // mode's parity (k even/odd) sets its behavior under the vertex
+            // reflection i -> N-1-i, hence which spatial mirror the field has.
+            let e1 = cos(PI * m.x * fi);
+            let e2 = cos(PI * m.y * fi);
+            let e3 = cos(PI * m.z * fi);
+            let e4 = cos(PI * m.w * fi);
             let qi = uniforms.simplex_offset + uniforms.simplex_scale *
                 (position.x * e1 + position.y * e2 + position.z * e3 + position.w * e4);
             q[i] = qi;

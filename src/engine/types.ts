@@ -56,6 +56,7 @@ export interface FieldParams {
   simplexCount: number; // N simplex vertices = body count (simplex mode)
   simplexScale: number; // embedding scale of the sample into simplex space
   simplexOffset: number; // embedding baseline offset
+  simplexModes: Vec4; // DCT mode k driving each sample axis (x, y, z, w)
   warpFactor: number;
   warpType: number; // 0 log | 1 asinh | 2 tanh
   temporalMode: number;

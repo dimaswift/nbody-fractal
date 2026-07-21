@@ -1,7 +1,7 @@
 // N-body simulation parameters — what shapes the field itself.
 
 import { useStore } from '../state/store';
-import { Row, Section, SelectField, Slider } from './controls';
+import { Button, NumberField, Row, Section, SelectField, Slider } from './controls';
 
 export function SimulationPanel() {
   const field = useStore((s) => s.field);
@@ -49,10 +49,23 @@ export function SimulationPanel() {
               step={0.01}
               onChange={(v) => setField({ simplexOffset: v })}
             />
+            <Row label="Modes k (x y z w)">
+              <NumberField value={field.simplexModes[0]} width={40} step={1} onChange={(v) => setField({ simplexModes: [v, field.simplexModes[1], field.simplexModes[2], field.simplexModes[3]] })} />
+              <NumberField value={field.simplexModes[1]} width={40} step={1} onChange={(v) => setField({ simplexModes: [field.simplexModes[0], v, field.simplexModes[2], field.simplexModes[3]] })} />
+              <NumberField value={field.simplexModes[2]} width={40} step={1} onChange={(v) => setField({ simplexModes: [field.simplexModes[0], field.simplexModes[1], v, field.simplexModes[3]] })} />
+              <NumberField value={field.simplexModes[3]} width={40} step={1} onChange={(v) => setField({ simplexModes: [field.simplexModes[0], field.simplexModes[1], field.simplexModes[2], v] })} />
+            </Row>
+            <div className="hint-row">
+              <Button variant="ghost" onClick={() => setField({ simplexModes: [1, 2, 3, 4] })}>1234</Button>
+              <Button variant="ghost" onClick={() => setField({ simplexModes: [2, 4, 6, 8] })}>even</Button>
+              <Button variant="ghost" onClick={() => setField({ simplexModes: [1, 3, 5, 7] })}>odd</Button>
+              <Button variant="ghost" onClick={() => setField({ simplexModes: [2, 1, 4, 3] })}>swap</Button>
+            </div>
             <span className="hint">
-              Bodies are the vertices of a regular N-simplex in N-D (all mutually equidistant), collapsed
-              onto the diagonal — the same 1-D reduction that makes the seed fractal, at higher order.
-              Hand-placed seeds are ignored here; N sets the dimension.
+              Bodies are the vertices of a regular N-simplex (mutually equidistant), collapsed onto the
+              diagonal. Each axis drives a cosine mode k; a mode's parity (even/odd) sets which spatial
+              mirror survives — odd k flips its axis under the vertex reflection, even k keeps it. N=5 is
+              the largest perfect simplex that fits in 4 axes. Hand-placed seeds are ignored here.
             </span>
           </>
         )}

@@ -105,14 +105,15 @@ interface Body {
  *  onto the 4D diagonal at val_i = density / exp(d_i). All masses = 1. */
 function simplexBodies(field: FieldParams, warped: Vec4): Body[] {
   const N = Math.max(1, Math.min(field.simplexCount, MAX_SIMPLEX));
+  const [mx, my, mz, mw] = field.simplexModes;
   const q: number[] = new Array(N);
   let q2 = 0;
   for (let i = 0; i < N; i++) {
     const fi = (i + 0.5) / N;
-    const e1 = Math.cos(Math.PI * fi);
-    const e2 = Math.cos(2 * Math.PI * fi);
-    const e3 = Math.cos(3 * Math.PI * fi);
-    const e4 = Math.cos(4 * Math.PI * fi);
+    const e1 = Math.cos(Math.PI * mx * fi);
+    const e2 = Math.cos(Math.PI * my * fi);
+    const e3 = Math.cos(Math.PI * mz * fi);
+    const e4 = Math.cos(Math.PI * mw * fi);
     const qi =
       field.simplexOffset +
       field.simplexScale * (warped[0] * e1 + warped[1] * e2 + warped[2] * e3 + warped[3] * e4);

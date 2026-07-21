@@ -17,8 +17,8 @@ export const POOL_SIZE = 64; // bricks evaluated per wave
 export const PROBE_RAYS = 64;
 export const PROBE_STEPS = 96;
 
-const UNIFORM_SIZE = 816;
-const OPERATOR_BASE = 176;
+const UNIFORM_SIZE = 832;
+const OPERATOR_BASE = 192;
 const OPERATOR_STRIDE = 80;
 
 export interface PipelineSet {
@@ -411,6 +411,7 @@ export class GpuEngine {
     u32[41] = field.simplexCount; // 164
     f32[42] = field.simplexScale; // 168
     f32[43] = field.simplexOffset; // 172
+    f32.set(field.simplexModes, 44); // 176: DCT modes for x,y,z,w
 
     const active = field.operators.filter((o) => o.enabled).slice(0, MAX_OPERATORS);
     for (let i = 0; i < MAX_OPERATORS; i++) {
