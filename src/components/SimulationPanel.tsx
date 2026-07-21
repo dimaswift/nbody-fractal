@@ -1,5 +1,6 @@
 // N-body simulation parameters — what shapes the field itself.
 
+import { generateSequence } from '../state/presets';
 import { useStore } from '../state/store';
 import { Button, NumberField, Row, Section, SelectField, Slider } from './controls';
 
@@ -12,9 +13,9 @@ export function SimulationPanel() {
   const generated = simplex || sequence;
 
   const selectSource = (v: number) => {
-    // Give sequence mode usable defaults (base + modulation both nonzero).
     if (v === 2 && field.fieldMode !== 2) {
-      setField({ fieldMode: v, simplexOffset: 1.0, simplexScale: 0.35 });
+      // seed a nice starting curve for the current N; modulation on
+      setField({ fieldMode: v, simplexScale: 0.35, sequenceValues: generateSequence('sine', field.simplexCount) });
     } else if (v === 1 && field.fieldMode !== 1) {
       setField({ fieldMode: v, simplexOffset: 0.0, simplexScale: 0.6 });
     } else {
@@ -47,39 +48,16 @@ export function SimulationPanel() {
               onChange={(v) => setField({ simplexCount: Math.round(v) })}
               format={(v) => String(Math.round(v))}
             />
-            {sequence && (
-              <>
-                <Row label="Spacing">
-                  <SelectField
-                    value={field.sequencePattern}
-                    options={[
-                      [0, 'Linear ramp'],
-                      [1, 'Power ramp'],
-                      [2, 'Sine'],
-                      [3, 'Zigzag comb'],
-                      [4, 'Geometric'],
-                    ]}
-                    onChange={(v) => setField({ sequencePattern: v })}
-                  />
-                </Row>
-                <Slider
-                  label="Shape"
-                  value={field.sequenceParam}
-                  min={0.1}
-                  max={6}
-                  step={0.05}
-                  onChange={(v) => setField({ sequenceParam: v })}
-                />
-              </>
+            {!sequence && (
+              <Slider
+                label="Embed scale"
+                value={field.simplexScale}
+                min={0.01}
+                max={2}
+                step={0.01}
+                onChange={(v) => setField({ simplexScale: v })}
+              />
             )}
-            <Slider
-              label={sequence ? 'Base amp' : 'Embed scale'}
-              value={sequence ? field.simplexOffset : field.simplexScale}
-              min={sequence ? -2 : 0.01}
-              max={2}
-              step={0.01}
-              onChange={(v) => setField(sequence ? { simplexOffset: v } : { simplexScale: v })}
-            />
             <Slider
               label={sequence ? 'Modulation' : 'Embed offset'}
               value={sequence ? field.simplexScale : field.simplexOffset}
@@ -102,7 +80,7 @@ export function SimulationPanel() {
             </div>
             <span className="hint">
               {sequence
-                ? 'Bypasses the exp(-distance) projection: the N bodies sit directly on a 1D sequence you sculpt (base spacing + shape), and the sample point perturbs it through the cosine modes. Base amp sets the resting spread; Modulation how strongly space warps it.'
+                ? 'Draw the resting 1D positions of the N bodies in the editor at the top; the sample point perturbs them through the cosine modes (Modulation sets how strongly). This is the raw input — upstream of the whole projection.'
                 : 'Bodies are the vertices of a regular N-simplex (mutually equidistant), collapsed onto the diagonal. Mode parity (even/odd) sets which spatial mirror survives. N=5 is the largest perfect simplex that fits in 4 axes.'}
             </span>
           </>

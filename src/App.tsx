@@ -11,6 +11,7 @@ import { ShadingPanel } from './components/ShadingPanel';
 import { SimulationPanel } from './components/SimulationPanel';
 import { StatusBar } from './components/StatusBar';
 import { TrajectoryPanel } from './components/TrajectoryPanel';
+import { SequenceEditor } from './components/SequenceEditor';
 
 function useKeyboardShortcuts() {
   const set = useStore((s) => s.set);
@@ -63,6 +64,8 @@ export default function App() {
         <h1>N-Body Fractal Studio</h1>
         <span className="topbar-hint">W/E/R gizmo · G extract · T sample point · Esc deselect</span>
       </header>
+
+      <SequenceEditor />
 
       <aside className="sidebar sidebar-left">
         <SeedsPanel />

@@ -57,8 +57,7 @@ export interface FieldParams {
   simplexScale: number; // embed scale (simplex) / sample modulation (sequence)
   simplexOffset: number; // embed offset (simplex) / base amplitude (sequence)
   simplexModes: Vec4; // DCT mode k driving each sample axis (x, y, z, w)
-  sequencePattern: number; // base spacing pattern: 0 linear|1 power|2 sine|3 zigzag|4 geometric
-  sequenceParam: number; // base spacing shape parameter
+  sequenceValues: number[]; // editable base 1D positions (sequence mode), length 32
   warpFactor: number;
   warpType: number; // 0 log | 1 asinh | 2 tanh
   temporalMode: number;
@@ -155,6 +154,7 @@ export const BRICK_CELLS = 32;
 export const BRICK_CORNERS = 33;
 export const BRICK_VOLUME = BRICK_CORNERS ** 3;
 export const MAX_SEEDS = 32;
+export const SEQUENCE_LEN = 32;
 export const MAX_OPERATORS = 8;
 export const FLOATS_PER_VERTEX = 8;
 export const BYTES_PER_VERTEX = FLOATS_PER_VERTEX * 4;

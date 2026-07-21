@@ -11,7 +11,7 @@ import {
   type Vec3,
   type Vec4,
 } from '../engine/types';
-import { SEED_PRESETS, randomSeeds } from './presets';
+import { SEED_PRESETS, generateSequence, randomSeeds } from './presets';
 
 // ----------------------------------------------------------------------------
 // Types
@@ -120,6 +120,8 @@ export interface AppState {
   addProbe: (position?: Vec3) => void;
   updateProbe: (id: string, patch: Partial<TrajectoryProbe>) => void;
   removeProbe: (id: string) => void;
+
+  setSequenceValue: (index: number, value: number) => void;
 }
 
 // ----------------------------------------------------------------------------
@@ -145,8 +147,7 @@ export const defaultField = (): FieldParams => ({
   simplexScale: 0.6,
   simplexOffset: 0.0,
   simplexModes: [1, 2, 3, 4],
-  sequencePattern: 2,
-  sequenceParam: 2.5,
+  sequenceValues: generateSequence('sine', 5),
   warpFactor: 0.0,
   warpType: 0,
   temporalMode: 3,
@@ -337,6 +338,13 @@ export const useStore = create<AppState>((set) => ({
       probes: s.probes.filter((p) => p.id !== id),
       selection: s.selection.kind === 'probe' && s.selection.id === id ? { kind: 'none' } : s.selection,
     })),
+
+  setSequenceValue: (index, value) =>
+    set((s) => {
+      const sequenceValues = s.field.sequenceValues.slice();
+      sequenceValues[index] = value;
+      return { field: { ...s.field, sequenceValues } };
+    }),
 }));
 
 /** The selected operator object, or null. */

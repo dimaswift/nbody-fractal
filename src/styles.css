@@ -35,9 +35,10 @@ body {
 .app {
   display: grid;
   grid-template-columns: 280px 1fr 312px;
-  grid-template-rows: 44px 1fr 30px;
+  grid-template-rows: 44px auto 1fr 30px;
   grid-template-areas:
     'topbar topbar topbar'
+    'seqbar seqbar seqbar'
     'left viewport right'
     'status status status';
   height: 100%;
@@ -92,6 +93,90 @@ body {
   min-height: 0;
 }
 
+/* --- sequence editor (top strip) --- */
+
+.seqbar {
+  grid-area: seqbar;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.seqbar-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.seqbar-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  margin-right: 6px;
+}
+
+.seqbar-preset {
+  padding: 2px 8px;
+  font-size: 10.5px;
+}
+
+.seqbar-area {
+  position: relative;
+  height: 96px;
+  width: 100%;
+  background: #0d0d12;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+.seqbar-zero {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed #333340;
+}
+
+.seqbar-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.seqbar-col::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.seqbar-fill {
+  position: absolute;
+  left: 30%;
+  width: 40%;
+  border-radius: 2px;
+  opacity: 0.85;
+}
+
+.seqbar-dot {
+  position: absolute;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: #fff;
+}
+
 .gpu-error {
   display: flex;
   flex-direction: column;
@@ -110,6 +195,9 @@ body {
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
+  /* Keep natural height in the flex column so the sidebar scrolls instead of
+     squashing sections and clipping their sliders. */
+  flex-shrink: 0;
 }
 
 .section-header {

@@ -102,6 +102,45 @@ export function randomSeeds(): Seed[] {
   return seeds;
 }
 
+import { SEQUENCE_LEN } from '../engine/types';
+
+export type SequencePreset = 'sine' | 'linear' | 'zigzag' | 'ramp' | 'random' | 'flat';
+
+/** Generate a base-spacing sequence of length SEQUENCE_LEN. Only the first N
+ *  entries (N = body count) are used; the rest are zeroed. */
+export function generateSequence(preset: SequencePreset, n: number, amp = 1.0): number[] {
+  const out = new Array(SEQUENCE_LEN).fill(0);
+  const N = Math.max(1, Math.min(n, SEQUENCE_LEN));
+  for (let i = 0; i < N; i++) {
+    const f = (i + 0.5) / N;
+    const t = 2 * f - 1;
+    let v: number;
+    switch (preset) {
+      case 'linear':
+        v = t;
+        break;
+      case 'zigzag':
+        v = 0.5 * t + 0.5 * ((i & 1) * 2 - 1);
+        break;
+      case 'ramp':
+        v = Math.sign(t) * Math.pow(Math.abs(t), 2.5);
+        break;
+      case 'random':
+        v = Math.random() * 2 - 1;
+        break;
+      case 'flat':
+        v = 0;
+        break;
+      case 'sine':
+      default:
+        v = Math.sin(Math.PI * 2 * f);
+        break;
+    }
+    out[i] = v * amp;
+  }
+  return out;
+}
+
 export interface Palette {
   a: [number, number, number];
   b: [number, number, number];
