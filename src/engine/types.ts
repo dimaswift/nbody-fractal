@@ -52,11 +52,13 @@ export interface FieldParams {
   interactionMode: number; // 0 attract | 1 mass-scaled repel
   bodyInitMode: number; // 0 diagonal broadcast (legacy) | 1 vertex-oriented
   // --- field source ---
-  fieldMode: number; // 0 hand-placed seeds | 1 regular-simplex collapse
-  simplexCount: number; // N simplex vertices = body count (simplex mode)
-  simplexScale: number; // embedding scale of the sample into simplex space
-  simplexOffset: number; // embedding baseline offset
+  fieldMode: number; // 0 hand-placed seeds | 1 simplex collapse | 2 direct sequence
+  simplexCount: number; // N simplex vertices = body count (simplex/sequence mode)
+  simplexScale: number; // embed scale (simplex) / sample modulation (sequence)
+  simplexOffset: number; // embed offset (simplex) / base amplitude (sequence)
   simplexModes: Vec4; // DCT mode k driving each sample axis (x, y, z, w)
+  sequencePattern: number; // base spacing pattern: 0 linear|1 power|2 sine|3 zigzag|4 geometric
+  sequenceParam: number; // base spacing shape parameter
   warpFactor: number;
   warpType: number; // 0 log | 1 asinh | 2 tanh
   temporalMode: number;

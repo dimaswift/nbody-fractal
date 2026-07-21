@@ -84,12 +84,16 @@ struct Uniforms {
     wave_brick_count: u32,  // 152  bricks in the current dispatch wave
     body_init_mode: u32,    // 156  0 diagonal (legacy) | 1 vertex-oriented
     // --- field source ---
-    field_mode: u32,        // 160  0 seeds | 1 regular-simplex collapse
-    simplex_count: u32,     // 164  N vertices of the simplex (== BODY_COUNT)
-    simplex_scale: f32,     // 168  embedding scale of the sample into simplex space
-    simplex_offset: f32,    // 172  embedding offset (baseline along each axis)
+    field_mode: u32,        // 160  0 seeds | 1 simplex collapse | 2 direct sequence
+    simplex_count: u32,     // 164  N vertices/bodies (== BODY_COUNT)
+    simplex_scale: f32,     // 168  embed scale (simplex) / sample modulation (sequence)
+    simplex_offset: f32,    // 172  embed offset (simplex) / base amplitude (sequence)
     simplex_modes: vec4f,   // 176  DCT mode k mapped to x, y, z, w axes
-    operators: array<ShapeOperator, 8>, // 192 .. 832
+    sequence_pattern: u32,  // 192  base spacing pattern (sequence mode)
+    sequence_param: f32,    // 196  base spacing shape parameter
+    seq_pad0: u32,          // 200
+    seq_pad1: u32,          // 204
+    operators: array<ShapeOperator, 8>, // 208 .. 848
 };
 
 struct Seed {
@@ -215,6 +219,24 @@ fn EvaluateFractal(initial_pos: vec4f) -> f32 {
             let d = sqrt(max(q2 + 1.0 - 2.0 * q[i], 0.0));
             let val = uniforms.density / exp(d);
             b[i].position = vec4f(val);
+            b[i].velocity = vec4f(0.0);
+            b[i].mass = 1.0;
+        }
+    } else if (uniforms.field_mode == 2u) {
+        // --- Direct 1D spacing sequence ---
+        // Bypasses the exp(-distance) projection entirely: the body's 1D
+        // coordinate is a user-sculpted resting sequence plus a per-body
+        // modulation read from the sample through the DCT frame. The field is
+        // then the same 1D n-body released from these positions.
+        let m = uniforms.simplex_modes;
+        for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
+            let f = (f32(i) + 0.5) / f32(BODY_COUNT);
+            let modulation =
+                position.x * cos(PI * m.x * f) + position.y * cos(PI * m.y * f) +
+                position.z * cos(PI * m.z * f) + position.w * cos(PI * m.w * f);
+            let base = base_spacing(i, BODY_COUNT, uniforms.sequence_pattern, uniforms.sequence_param);
+            let u = uniforms.density * (uniforms.simplex_offset * base + uniforms.simplex_scale * modulation);
+            b[i].position = vec4f(u);
             b[i].velocity = vec4f(0.0);
             b[i].mass = 1.0;
         }
@@ -377,6 +399,25 @@ fn shape_distance(shape_type: u32, lp: vec3f, size: f32) -> f32 {
         return length(q);
     }
     return 1e9;
+}
+
+// Base resting-spacing sequence for direct-sequence mode. i in [0,N), the
+// returned value is the body's 1D coordinate before sample modulation.
+fn base_spacing(i: u32, n: u32, pattern: u32, param: f32) -> f32 {
+    let f = (f32(i) + 0.5) / f32(n);
+    let t = 2.0 * f - 1.0; // in (-1, 1)
+    if (pattern == 0u) {
+        return t;                                      // linear ramp
+    } else if (pattern == 1u) {
+        return sign(t) * pow(abs(t), max(param, 0.001)); // power ramp
+    } else if (pattern == 2u) {
+        return sin(PI * param * f);                    // sine
+    } else if (pattern == 3u) {
+        return t + 0.5 * param * (f32(i & 1u) * 2.0 - 1.0); // zigzag comb
+    } else if (pattern == 4u) {
+        return pow(param, f32(i)) - pow(param, f32(n - 1u) * 0.5); // geometric
+    }
+    return t;
 }
 
 fn operator_mask(p: vec3f) -> f32 {

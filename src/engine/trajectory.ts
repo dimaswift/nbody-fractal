@@ -129,6 +129,45 @@ function simplexBodies(field: FieldParams, warped: Vec4): Body[] {
   return bodies;
 }
 
+/** Base resting-spacing sequence — mirrors compute.wgsl base_spacing(). */
+function baseSpacing(i: number, n: number, pattern: number, param: number): number {
+  const f = (i + 0.5) / n;
+  const t = 2 * f - 1;
+  switch (pattern) {
+    case 0:
+      return t;
+    case 1:
+      return Math.sign(t) * Math.pow(Math.abs(t), Math.max(param, 0.001));
+    case 2:
+      return Math.sin(Math.PI * param * f);
+    case 3:
+      return t + 0.5 * param * ((i & 1) * 2 - 1);
+    case 4:
+      return Math.pow(param, i) - Math.pow(param, ((n - 1) * 0.5));
+    default:
+      return t;
+  }
+}
+
+/** Direct 1D spacing init — mirrors compute.wgsl's field_mode 2. */
+function sequenceBodies(field: FieldParams, warped: Vec4): Body[] {
+  const N = Math.max(1, Math.min(field.simplexCount, MAX_SIMPLEX));
+  const [mx, my, mz, mw] = field.simplexModes;
+  const bodies: Body[] = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const f = (i + 0.5) / N;
+    const modulation =
+      warped[0] * Math.cos(Math.PI * mx * f) +
+      warped[1] * Math.cos(Math.PI * my * f) +
+      warped[2] * Math.cos(Math.PI * mz * f) +
+      warped[3] * Math.cos(Math.PI * mw * f);
+    const base = baseSpacing(i, N, field.sequencePattern, field.sequenceParam);
+    const u = field.density * (field.simplexOffset * base + field.simplexScale * modulation);
+    bodies[i] = { pos: [u, u, u, u], vel: [0, 0, 0, 0], mass: 1 };
+  }
+  return bodies;
+}
+
 function accelerations(bodies: Body[], soften: number, interactionMode: number): Vec4[] {
   const n = bodies.length;
   const a: Vec4[] = bodies.map(() => [0, 0, 0, 0]);
@@ -169,6 +208,8 @@ export function integrateTrajectory(
   const bodies: Body[] =
     field.fieldMode === 1
       ? simplexBodies(field, warped)
+      : field.fieldMode === 2
+      ? sequenceBodies(field, warped)
       : field.seeds.map((seed) => {
           const dx = warped[0] - seed.position[0];
           const dy = warped[1] - seed.position[1];

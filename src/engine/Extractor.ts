@@ -108,12 +108,12 @@ export class Extractor {
     engine.writeSeeds(field);
     engine.clearCounter();
 
-    // In simplex mode the body count is the simplex vertex count and the
-    // hand-placed seeds are unused (the simplex is canonical).
-    const bodyCount =
-      field.fieldMode === 1
-        ? Math.max(1, Math.min(field.simplexCount, MAX_SEEDS))
-        : Math.max(1, field.seeds.length);
+    // In simplex/sequence mode the body count is simplexCount and the
+    // hand-placed seeds are unused (the constellation is generated).
+    const generated = field.fieldMode === 1 || field.fieldMode === 2;
+    const bodyCount = generated
+      ? Math.max(1, Math.min(field.simplexCount, MAX_SEEDS))
+      : Math.max(1, field.seeds.length);
     const spec = req.specialize
       ? {
           bodyCount,
@@ -121,11 +121,10 @@ export class Extractor {
           interactionMode: field.interactionMode,
           metricMode: field.metricMode,
           warpType: field.warpType,
-          // Don't unroll seed constants in simplex mode — they aren't read.
-          seeds:
-            field.fieldMode === 1
-              ? undefined
-              : field.seeds.map((s) => ({ position: [...s.position], mass: s.mass })),
+          // Don't unroll seed constants when the constellation is generated.
+          seeds: generated
+            ? undefined
+            : field.seeds.map((s) => ({ position: [...s.position], mass: s.mass })),
         }
       : { bodyCount };
     const pipes = await engine.getPipelines(spec);

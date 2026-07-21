@@ -145,6 +145,8 @@ export const defaultField = (): FieldParams => ({
   simplexScale: 0.6,
   simplexOffset: 0.0,
   simplexModes: [1, 2, 3, 4],
+  sequencePattern: 2,
+  sequenceParam: 2.5,
   warpFactor: 0.0,
   warpType: 0,
   temporalMode: 3,

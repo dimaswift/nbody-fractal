@@ -8,6 +8,19 @@ export function SimulationPanel() {
   const setField = useStore((s) => s.setField);
 
   const simplex = field.fieldMode === 1;
+  const sequence = field.fieldMode === 2;
+  const generated = simplex || sequence;
+
+  const selectSource = (v: number) => {
+    // Give sequence mode usable defaults (base + modulation both nonzero).
+    if (v === 2 && field.fieldMode !== 2) {
+      setField({ fieldMode: v, simplexOffset: 1.0, simplexScale: 0.35 });
+    } else if (v === 1 && field.fieldMode !== 1) {
+      setField({ fieldMode: v, simplexOffset: 0.0, simplexScale: 0.6 });
+    } else {
+      setField({ fieldMode: v });
+    }
+  };
 
   return (
     <>
@@ -18,14 +31,15 @@ export function SimulationPanel() {
             options={[
               [0, 'Seeds (constellation)'],
               [1, 'Simplex collapse'],
+              [2, 'Sequence (1D spacing)'],
             ]}
-            onChange={(v) => setField({ fieldMode: v })}
+            onChange={selectSource}
           />
         </Row>
-        {simplex && (
+        {generated && (
           <>
             <Slider
-              label="Vertices (N)"
+              label="Bodies (N)"
               value={field.simplexCount}
               min={2}
               max={32}
@@ -33,21 +47,46 @@ export function SimulationPanel() {
               onChange={(v) => setField({ simplexCount: Math.round(v) })}
               format={(v) => String(Math.round(v))}
             />
+            {sequence && (
+              <>
+                <Row label="Spacing">
+                  <SelectField
+                    value={field.sequencePattern}
+                    options={[
+                      [0, 'Linear ramp'],
+                      [1, 'Power ramp'],
+                      [2, 'Sine'],
+                      [3, 'Zigzag comb'],
+                      [4, 'Geometric'],
+                    ]}
+                    onChange={(v) => setField({ sequencePattern: v })}
+                  />
+                </Row>
+                <Slider
+                  label="Shape"
+                  value={field.sequenceParam}
+                  min={0.1}
+                  max={6}
+                  step={0.05}
+                  onChange={(v) => setField({ sequenceParam: v })}
+                />
+              </>
+            )}
             <Slider
-              label="Embed scale"
-              value={field.simplexScale}
-              min={0.01}
+              label={sequence ? 'Base amp' : 'Embed scale'}
+              value={sequence ? field.simplexOffset : field.simplexScale}
+              min={sequence ? -2 : 0.01}
               max={2}
               step={0.01}
-              onChange={(v) => setField({ simplexScale: v })}
+              onChange={(v) => setField(sequence ? { simplexOffset: v } : { simplexScale: v })}
             />
             <Slider
-              label="Embed offset"
-              value={field.simplexOffset}
-              min={-1}
-              max={1}
+              label={sequence ? 'Modulation' : 'Embed offset'}
+              value={sequence ? field.simplexScale : field.simplexOffset}
+              min={sequence ? 0 : -1}
+              max={sequence ? 1.5 : 1}
               step={0.01}
-              onChange={(v) => setField({ simplexOffset: v })}
+              onChange={(v) => setField(sequence ? { simplexScale: v } : { simplexOffset: v })}
             />
             <Row label="Modes k (x y z w)">
               <NumberField value={field.simplexModes[0]} width={40} step={1} onChange={(v) => setField({ simplexModes: [v, field.simplexModes[1], field.simplexModes[2], field.simplexModes[3]] })} />
@@ -62,10 +101,9 @@ export function SimulationPanel() {
               <Button variant="ghost" onClick={() => setField({ simplexModes: [2, 1, 4, 3] })}>swap</Button>
             </div>
             <span className="hint">
-              Bodies are the vertices of a regular N-simplex (mutually equidistant), collapsed onto the
-              diagonal. Each axis drives a cosine mode k; a mode's parity (even/odd) sets which spatial
-              mirror survives — odd k flips its axis under the vertex reflection, even k keeps it. N=5 is
-              the largest perfect simplex that fits in 4 axes. Hand-placed seeds are ignored here.
+              {sequence
+                ? 'Bypasses the exp(-distance) projection: the N bodies sit directly on a 1D sequence you sculpt (base spacing + shape), and the sample point perturbs it through the cosine modes. Base amp sets the resting spread; Modulation how strongly space warps it.'
+                : 'Bodies are the vertices of a regular N-simplex (mutually equidistant), collapsed onto the diagonal. Mode parity (even/odd) sets which spatial mirror survives. N=5 is the largest perfect simplex that fits in 4 axes.'}
             </span>
           </>
         )}
