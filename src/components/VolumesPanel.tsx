@@ -5,7 +5,7 @@
 import { conformVolume, snapshotVolumeMesh } from '../engine/orchestrator';
 import { meshToStl } from '../engine/stlExport';
 import { downloadBlob } from '../state/persistence';
-import { isVolumeStale, useStore } from '../state/store';
+import { isVolumeStale, useStore, type Volume } from '../state/store';
 import { Button, Section } from './controls';
 
 export function VolumesPanel() {
@@ -19,7 +19,9 @@ export function VolumesPanel() {
   const updateVolume = useStore((s) => s.updateVolume);
   const select = useStore((s) => s.select);
 
-  const anyStale = volumes.some((v) => isVolumeStale(v, fieldNonce));
+  // the active volume auto-conforms, so it never counts as stale in the UI
+  const staleOf = (v: Volume) => v.id !== activeId && isVolumeStale(v, fieldNonce);
+  const anyStale = volumes.some(staleOf);
 
   const exportVolume = (id: string, name: string) => {
     const snap = snapshotVolumeMesh(id);
@@ -43,7 +45,7 @@ export function VolumesPanel() {
           <Button
             variant="primary"
             title="Re-extract every stale volume against the current field"
-            onClick={() => volumes.forEach((v) => isVolumeStale(v, fieldNonce) && conformVolume(v.id))}
+            onClick={() => volumes.forEach((v) => staleOf(v) && conformVolume(v.id))}
           >
             ⟳ Conform all
           </Button>
@@ -52,7 +54,7 @@ export function VolumesPanel() {
       {volumes.map((v) => {
         const active = v.id === activeId;
         const selected = selection.kind === 'volume' && selection.id === v.id;
-        const stale = isVolumeStale(v, fieldNonce);
+        const stale = staleOf(v);
         return (
           <div
             key={v.id}

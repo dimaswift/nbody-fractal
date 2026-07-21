@@ -14,7 +14,7 @@ import {
   type SamplingParams,
   type Vec3,
 } from './types';
-import { useStore, getActiveVolume, type Volume } from '../state/store';
+import { useStore, getActiveVolume, isVolumeStale, type Volume } from '../state/store';
 
 type MeshListener = (mesh: MeshUpdate) => void;
 
@@ -119,8 +119,19 @@ export async function startOrchestrator(): Promise<void> {
       }
     }
 
-    // NOTE: a field change (cur.fieldJson) intentionally enqueues NOTHING —
-    // volumes are marked stale (fieldNonce) and wait for an explicit Conform.
+    // A field change auto-conforms the ACTIVE volume (with a low-res preview
+    // while dragging), so the volume you're working on stays live like before.
+    // Every OTHER volume is left stale (fieldNonce) until an explicit Conform.
+    if (cur.fieldJson !== prev.fieldJson) {
+      dirty.add(cur.activeId);
+      if (cur.isInteracting) interactionVolumeId = cur.activeId;
+    }
+
+    // Selecting a stale volume conforms it — the active volume is always fresh.
+    if (cur.activeId !== prev.activeId) {
+      const av = s.volumes.find((v) => v.id === cur.activeId);
+      if (av && isVolumeStale(av, s.fieldNonce)) dirty.add(cur.activeId);
+    }
 
     const justReleased = prev.isInteracting && !cur.isInteracting;
     prev = cur;
@@ -151,6 +162,7 @@ interface Slice {
   nonce: number;
   isInteracting: boolean;
   volumeIds: string[];
+  activeId: string;
   samplingJson: Record<string, string>;
 }
 
@@ -158,6 +170,7 @@ function pickSlice(s: ReturnType<typeof useStore.getState>): Slice {
   const samplingJson: Record<string, string> = {};
   for (const v of s.volumes) samplingJson[v.id] = JSON.stringify(v.sampling);
   return {
+    activeId: s.activeVolumeId,
     fieldJson: JSON.stringify(s.field),
     specialize: s.specialize,
     nonce: s.extractNonce,

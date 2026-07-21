@@ -76,7 +76,8 @@ function VolumeMesh({ volume, selected }: { volume: Volume; selected: boolean })
   const updateVolume = useStore((s) => s.updateVolume);
   const setState = useStore((s) => s.set);
   const gizmoMode = useStore((s) => s.gizmoMode);
-  const stale = useStore((s) => isVolumeStale(volume, s.fieldNonce));
+  // active volume auto-conforms, so it's never shown as stale
+  const stale = useStore((s) => volume.id !== s.activeVolumeId && isVolumeStale(volume, s.fieldNonce));
   // top of the mesh's bounding sphere, in the volume's local frame (for the marker)
   const [markerTop, setMarkerTop] = useState<[number, number, number]>([0, 1.8, 0]);
 
