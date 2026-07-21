@@ -568,15 +568,20 @@ fn brick_mc(@builtin(global_invocation_id) gid: vec3u) {
         val[i] = pool_at(base, cell + cornerOffsets[i]);
     }
 
+    // invert_normals is a bitfield: bit0 = flip normals (shading), bit1 =
+    // extract complement (mesh the LOW-field side as solid -> cavity interiors).
+    // Complement classifies corners with val > iso, which reverses winding.
+    let complement = (uniforms.invert_normals & 2u) != 0u;
+    let cs = select(1.0, -1.0, complement);
     var cubeindex = 0u;
-    if (val[0] < isovalue) { cubeindex = cubeindex | 1u; }
-    if (val[1] < isovalue) { cubeindex = cubeindex | 2u; }
-    if (val[2] < isovalue) { cubeindex = cubeindex | 4u; }
-    if (val[3] < isovalue) { cubeindex = cubeindex | 8u; }
-    if (val[4] < isovalue) { cubeindex = cubeindex | 16u; }
-    if (val[5] < isovalue) { cubeindex = cubeindex | 32u; }
-    if (val[6] < isovalue) { cubeindex = cubeindex | 64u; }
-    if (val[7] < isovalue) { cubeindex = cubeindex | 128u; }
+    if (cs * val[0] < cs * isovalue) { cubeindex = cubeindex | 1u; }
+    if (cs * val[1] < cs * isovalue) { cubeindex = cubeindex | 2u; }
+    if (cs * val[2] < cs * isovalue) { cubeindex = cubeindex | 4u; }
+    if (cs * val[3] < cs * isovalue) { cubeindex = cubeindex | 8u; }
+    if (cs * val[4] < cs * isovalue) { cubeindex = cubeindex | 16u; }
+    if (cs * val[5] < cs * isovalue) { cubeindex = cubeindex | 32u; }
+    if (cs * val[6] < cs * isovalue) { cubeindex = cubeindex | 64u; }
+    if (cs * val[7] < cs * isovalue) { cubeindex = cubeindex | 128u; }
 
     if (cubeindex == 0u || cubeindex == 255u) {
         return;
@@ -633,10 +638,10 @@ fn brick_mc(@builtin(global_invocation_id) gid: vec3u) {
             let ny = pool_at(base, vec3u(gc.x, gc.y + 1u, gc.z)) - pool_at(base, vec3u(gc.x, gc.y - 1u, gc.z));
             let nz = pool_at(base, vec3u(gc.x, gc.y, gc.z + 1u)) - pool_at(base, vec3u(gc.x, gc.y, gc.z - 1u));
 
-            var normal_sign = -1.0;
-            if (uniforms.invert_normals == 1u) {
-                normal_sign = 1.0;
-            }
+            // Outward is toward decreasing field for a solid (high-field)
+            // surface, toward increasing field for the complement. bit0 flips.
+            var normal_sign = select(-1.0, 1.0, complement);
+            if ((uniforms.invert_normals & 1u) != 0u) { normal_sign = -normal_sign; }
             var norm = normal_sign * vec3f(nx, ny, nz);
             if (length(norm) > 1e-5) {
                 norm = normalize(norm);
@@ -686,12 +691,12 @@ fn refine_vertices(
     let iso = uniforms.isovalue;
     let cell_min = uniforms.lattice_origin.w;
 
-    // Downhill direction (field decreasing = outward). Stored normal is
-    // normal_sign * grad with normal_sign = -1 by default.
+    let complement = (uniforms.invert_normals & 2u) != 0u;
+
+    // The stored MC normal already points outward for the chosen surface side;
+    // walk along it to the exact crossing (the bracket below self-corrects
+    // orientation, so this works for both solid and complement).
     var dir = mc_vertices[vid].normal.xyz;
-    if (uniforms.invert_normals == 1u) {
-        dir = -dir;
-    }
     if (length(dir) < 1e-6) {
         dir = vec3f(0.0, 1.0, 0.0);
     } else {
@@ -745,10 +750,8 @@ fn refine_vertices(
     let gz = field_at(p + vec3f(0.0, 0.0, h), 0.0) - field_at(p - vec3f(0.0, 0.0, h), 0.0);
     let grad = vec3f(gx, gy, gz) / (2.0 * h);
 
-    var normal_sign = -1.0;
-    if (uniforms.invert_normals == 1u) {
-        normal_sign = 1.0;
-    }
+    var normal_sign = select(-1.0, 1.0, complement);
+    if ((uniforms.invert_normals & 1u) != 0u) { normal_sign = -normal_sign; }
     var new_normal = mc_vertices[vid].normal.xyz;
     if (length(grad) > 1e-9) {
         new_normal = normalize(normal_sign * grad);

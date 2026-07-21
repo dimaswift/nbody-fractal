@@ -138,6 +138,7 @@ export class Extractor {
         refineMode: sampling.refineMode,
         normalDetail: sampling.normalDetail,
         invertNormals: sampling.invertNormals,
+        extractComplement: sampling.extractComplement,
         waveBrickCount,
         probeOrigin: sampling.growSeed,
         probeStep: Math.max(1e-6, sampling.searchRadius) / PROBE_STEPS,

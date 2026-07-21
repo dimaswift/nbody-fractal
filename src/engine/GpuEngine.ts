@@ -55,6 +55,7 @@ export interface UniformContext {
   refineMode: number;
   normalDetail: number;
   invertNormals: boolean;
+  extractComplement: boolean;
   waveBrickCount: number;
   probeOrigin: [number, number, number];
   probeStep: number;
@@ -403,7 +404,8 @@ export class GpuEngine {
     u32[33] = ctx.maxVertices;
     u32[34] = ctx.refineMode;
     f32[35] = ctx.normalDetail;
-    u32[36] = ctx.invertNormals ? 1 : 0;
+    // bitfield: bit0 = flip normals (shading), bit1 = extract complement
+    u32[36] = (ctx.invertNormals ? 1 : 0) | (ctx.extractComplement ? 2 : 0);
     u32[37] = Math.min(field.operators.filter((o) => o.enabled).length, MAX_OPERATORS);
     u32[38] = ctx.waveBrickCount;
     u32[39] = field.bodyInitMode; // 156: 0 diagonal | 1 vertex-oriented

@@ -43,11 +43,21 @@ export function SamplingPanel() {
       <Slider
         label="Isovalue"
         value={sampling.isovalue}
-        min={0.05}
-        max={20}
-        step={0.01}
+        min={0.01}
+        max={2000}
+        log
         onChange={(v) => setSampling({ isovalue: v })}
       />
+      <Row label="Surface side">
+        <SelectField
+          value={sampling.extractComplement ? 1 : 0}
+          options={[
+            [0, 'Solid (high field)'],
+            [1, 'Cavity (low field)'],
+          ]}
+          onChange={(v) => setSampling({ extractComplement: v === 1 })}
+        />
+      </Row>
 
       {sampling.mode === 'flood' ? (
         <>

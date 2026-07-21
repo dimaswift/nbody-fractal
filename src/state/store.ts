@@ -182,6 +182,7 @@ export const defaultSampling = (): SamplingParams => ({
   refineMode: 2,
   normalDetail: 0.3,
   invertNormals: false,
+  extractComplement: false,
   boxHalfExtent: 1.8,
   boxCenter: [0, 0, 0],
   growSeed: [0, 0, 0],

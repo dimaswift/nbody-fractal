@@ -84,6 +84,8 @@ export interface SamplingParams {
   refineMode: number; // 0 off | 1 fast | 2 ultra
   normalDetail: number;
   invertNormals: boolean;
+  /** mesh the low-field side as solid — extracts cavity interiors */
+  extractComplement: boolean;
   /** box mode: world-space half-extent, centered on boxCenter */
   boxHalfExtent: number;
   boxCenter: Vec3;
