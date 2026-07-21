@@ -406,7 +406,7 @@ export class GpuEngine {
     u32[36] = ctx.invertNormals ? 1 : 0;
     u32[37] = Math.min(field.operators.filter((o) => o.enabled).length, MAX_OPERATORS);
     u32[38] = ctx.waveBrickCount;
-    u32[39] = 0;
+    u32[39] = field.bodyInitMode; // 156: 0 diagonal | 1 vertex-oriented
 
     const active = field.operators.filter((o) => o.enabled).slice(0, MAX_OPERATORS);
     for (let i = 0; i < MAX_OPERATORS; i++) {

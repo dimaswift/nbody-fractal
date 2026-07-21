@@ -50,6 +50,7 @@ export interface FieldParams {
   energyThreshold: number;
   metricMode: number; // 0 KE until escape | 1 KE full steps | 2 escape step count
   interactionMode: number; // 0 attract | 1 mass-scaled repel
+  bodyInitMode: number; // 0 diagonal broadcast (legacy) | 1 vertex-oriented
   warpFactor: number;
   warpType: number; // 0 log | 1 asinh | 2 tanh
   temporalMode: number;

@@ -50,8 +50,15 @@ export function deleteConfig(name: string) {
 export function applyConfig(cfg: StudioConfig) {
   const store = useStore.getState();
   // Merge over defaults so configs stay loadable when fields are added later
+  const field = { ...defaultField(), ...cfg.field };
+  // Configs saved before body-init mode existed were authored under the
+  // legacy diagonal broadcast — pin them to mode 0 so they load unchanged
+  // (rather than inheriting the new vertex-oriented default).
+  if ((cfg.field as Partial<typeof field>).bodyInitMode === undefined) {
+    field.bodyInitMode = 0;
+  }
   store.set({
-    field: { ...defaultField(), ...cfg.field },
+    field,
     sampling: { ...defaultSampling(), ...cfg.sampling },
     shading: { ...defaultShading(), ...cfg.shading },
     selection: { kind: 'none' },

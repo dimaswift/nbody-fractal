@@ -75,6 +75,16 @@ export function SimulationPanel() {
             onChange={(v) => setField({ interactionMode: v })}
           />
         </Row>
+        <Row label="Body init">
+          <SelectField
+            value={field.bodyInitMode}
+            options={[
+              [1, 'Vertex-oriented'],
+              [0, 'Diagonal (legacy)'],
+            ]}
+            onChange={(v) => setField({ bodyInitMode: v })}
+          />
+        </Row>
         <Slider
           label="Core vel X"
           value={field.coreVelocity[0]}

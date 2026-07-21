@@ -80,7 +80,7 @@ struct Uniforms {
     invert_normals: u32,    // 144
     operator_count: u32,    // 148
     wave_brick_count: u32,  // 152  bricks in the current dispatch wave
-    _pad0: u32,             // 156
+    body_init_mode: u32,    // 156  0 diagonal (legacy) | 1 vertex-oriented
     operators: array<ShapeOperator, 8>, // 160 .. 800
 };
 
@@ -187,7 +187,18 @@ fn EvaluateFractal(initial_pos: vec4f) -> f32 {
         }
         let d = length(position - seed_pos);
         let val = uniforms.density / exp(d);
-        b[i].position = vec4f(val);
+        // `val` is the density falloff from the sample point to this seed —
+        // it MUST enter the initial position (that's the only way the field
+        // varies in space). Mode 0 broadcasts it onto the 4D main diagonal
+        // (the original scalar-broadcast behavior: every body at (q,q,q,q),
+        // so the constellation's orientation is discarded). Mode 1 instead
+        // places the body along its own seed's 4D direction, scaled by that
+        // same falloff — the vertices' geometry now drives the dynamics.
+        if (uniforms.body_init_mode == 1u) {
+            b[i].position = seed_pos * val;
+        } else {
+            b[i].position = vec4f(val);
+        }
         b[i].velocity = vec4f(0.0);
         b[i].mass = seed_mass;
     }

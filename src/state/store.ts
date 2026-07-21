@@ -122,6 +122,7 @@ export const defaultField = (): FieldParams => ({
   energyThreshold: 0.0,
   metricMode: 1,
   interactionMode: 0,
+  bodyInitMode: 1,
   warpFactor: 0.0,
   warpType: 0,
   temporalMode: 3,
