@@ -39,6 +39,16 @@ export function ShadingPanel() {
       <Slider label="Diffuse" value={shading.diffuse} min={0} max={2} step={0.01} onChange={(v) => setShading({ diffuse: v })} />
       <Slider label="Specular" value={shading.specular} min={0} max={2} step={0.01} onChange={(v) => setShading({ specular: v })} />
       <Slider label="Shininess" value={shading.shininess} min={2} max={200} step={1} onChange={(v) => setShading({ shininess: v })} />
+      <Row label="Light anchor">
+        <SelectField
+          value={shading.lightGlobal ? 1 : 0}
+          options={[
+            [0, 'Local (subject)'],
+            [1, 'Global (view)'],
+          ]}
+          onChange={(v) => setShading({ lightGlobal: v === 1 })}
+        />
+      </Row>
       <Slider label="Rim" value={shading.rimStrength} min={0} max={1.5} step={0.01} onChange={(v) => setShading({ rimStrength: v })} />
       <Slider label="Iridescence" value={shading.iridescence} min={0} max={3} step={0.01} onChange={(v) => setShading({ iridescence: v })} />
       <Slider label="Exposure" value={shading.exposure} min={0.1} max={3} step={0.01} onChange={(v) => setShading({ exposure: v })} />

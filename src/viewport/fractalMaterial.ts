@@ -46,6 +46,7 @@ uniform float uDiffuse;
 uniform float uSpecular;
 uniform float uShininess;
 uniform vec3 uLightPos;
+uniform float uLightGlobal; // 0 = local (world/subject-fixed) | 1 = global (view/headlight)
 uniform float uRim;
 uniform float uIridescence;
 uniform float uExposure;
@@ -94,12 +95,19 @@ void main() {
 
   vec3 baseColor = cosPalette(t);
 
-  // Key + fill + hemisphere + specular + rim.
-  // Directional key light (light at infinity): its direction is constant over
-  // the whole surface, so specular depends only on N and the view. A near-field
-  // point light makes the light direction vary per point, which makes highlights
-  // crawl erratically as the camera orbits — the "specular looks wrong" effect.
-  vec3 Ld = normalize(uLightPos);
+  // Key + fill + hemisphere + specular + rim. Directional key light (at
+  // infinity) so specular depends only on N and the view. Two anchors:
+  //  local  — direction fixed in WORLD space: glued to the subject, the same
+  //           side stays lit as you orbit (current behavior).
+  //  global — direction fixed in VIEW space (headlight): rotates with the
+  //           camera, so different sides light up as you orbit.
+  //  (v * mat3(viewMatrix) == transpose(mat3(viewMatrix)) * v = view->world.)
+  vec3 Ld;
+  if (uLightGlobal > 0.5) {
+    Ld = normalize(uLightPos * mat3(viewMatrix));
+  } else {
+    Ld = normalize(uLightPos);
+  }
   vec3 H = normalize(Ld + V);
 
   float keyDiff = uDiffuse * max(dot(N, Ld), 0.0);
@@ -136,6 +144,7 @@ export function createFractalMaterial(): ShaderMaterial {
       uSpecular: { value: 0.8 },
       uShininess: { value: 40 },
       uLightPos: { value: new Vector3(0.5, 0.5, 2.0) },
+      uLightGlobal: { value: 0 },
       uRim: { value: 0.35 },
       uIridescence: { value: 0 },
       uExposure: { value: 1.15 },
@@ -159,6 +168,7 @@ export function applyShading(mat: ShaderMaterial, shading: ShadingParams, isoval
   mat.uniforms.uSpecular.value = shading.specular;
   mat.uniforms.uShininess.value = shading.shininess;
   (mat.uniforms.uLightPos.value as Vector3).set(...shading.lightPos);
+  mat.uniforms.uLightGlobal.value = shading.lightGlobal ? 1 : 0;
   mat.uniforms.uRim.value = shading.rimStrength;
   mat.uniforms.uIridescence.value = shading.iridescence;
   mat.uniforms.uExposure.value = shading.exposure;

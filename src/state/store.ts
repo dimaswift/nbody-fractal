@@ -28,6 +28,8 @@ export interface ShadingParams {
   specular: number;
   shininess: number;
   lightPos: Vec3;
+  /** false = local (light glued to subject) | true = global (headlight, rotates with camera) */
+  lightGlobal: boolean;
   rimStrength: number;
   iridescence: number;
   exposure: number;
@@ -200,6 +202,7 @@ export const defaultShading = (): ShadingParams => ({
   specular: 0.8,
   shininess: 40.0,
   lightPos: [0.5, 0.5, 2.0],
+  lightGlobal: false,
   rimStrength: 0.35,
   iridescence: 0.0,
   exposure: 1.15,
