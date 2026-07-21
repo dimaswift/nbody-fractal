@@ -442,18 +442,16 @@ fn field_at(pos3: vec3f, w_offset: f32) -> f32 {
     let raw = EvaluateFractal(pos4);
 
     // --- Extraction field E, thresholded by the MC at `isovalue`. ---
-    // Material (E >= iso) is the SOLID side by default (high field), or the
-    // CAVITY side when complementing (invert_normals bit1): reflect the field
-    // about iso so the low-field pockets become material. The operator mask is
-    // a HARD domain cap (not a soft multiply), so the complement is bounded by
-    // the same clip region — making solid and cavity true inverses that
-    // partition the domain, instead of the same surface with flipped winding.
+    // Solid (default): E = raw. Cavity (invert_normals bit1): reflect the field
+    // about iso, so the LOW-field pockets become material (E >= iso <=> raw <=
+    // iso). The operator mask still multiplies softly, which both bounds the
+    // cavity to the clip region (mask -> 0 outside -> E < iso -> not material)
+    // AND keeps the smooth falloff at the boundary. Solid and cavity are true
+    // inverses inside the domain; the shared mask gives them the same soft cap.
     let iso = uniforms.isovalue;
     let complement = (uniforms.invert_normals & 2u) != 0u;
-    let material_dist = select(raw - iso, iso - raw, complement); // >0 = material
-    let keep = operator_mask(pos3);                                // [0,1], 1 inside
-    let domain = (keep - 0.5) * 2.0e4;                             // >0 inside domain
-    return iso + min(material_dist, domain);
+    let side_val = select(raw, 2.0 * iso - raw, complement);
+    return side_val * operator_mask(pos3);
 }
 
 // World position of a global lattice corner index (bitwise identical across
