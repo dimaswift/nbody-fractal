@@ -67,6 +67,8 @@ export interface FieldParams {
   coreVelocity: Vec4;
   samplingZoom: number;
   fractalPivot: Vec4;
+  /** workspace rotation about the Y axis (radians) applied to the fractal sample */
+  fieldYaw: number;
   operators: Operator[];
 }
 

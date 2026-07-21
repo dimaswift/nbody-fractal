@@ -2,7 +2,7 @@
 
 import { OpType, ShapeType } from '../engine/types';
 import { useStore } from '../state/store';
-import { Button, Row, Section, SelectField, Slider } from './controls';
+import { Button, NumberField, Row, Section, SelectField, Slider } from './controls';
 
 const SHAPE_OPTIONS: [number, string][] = [
   [ShapeType.Sphere, 'Sphere'],
@@ -103,6 +103,18 @@ export function OperatorsPanel() {
               step={0.005}
               onChange={(v) => updateOperator(op.id, { falloff: v })}
             />
+            <Row label="Pos X/Y/Z">
+              <NumberField value={op.position[0]} width={52} onChange={(v) => updateOperator(op.id, { position: [v, op.position[1], op.position[2]] })} />
+              <NumberField value={op.position[1]} width={52} onChange={(v) => updateOperator(op.id, { position: [op.position[0], v, op.position[2]] })} />
+              <NumberField value={op.position[2]} width={52} onChange={(v) => updateOperator(op.id, { position: [op.position[0], op.position[1], v] })} />
+              <Button
+                variant="ghost"
+                title="Reset position to origin"
+                onClick={() => updateOperator(op.id, { position: [0, 0, 0] })}
+              >
+                ⊙
+              </Button>
+            </Row>
           </div>
         );
       })}

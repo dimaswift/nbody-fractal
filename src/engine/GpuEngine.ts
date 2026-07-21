@@ -17,9 +17,10 @@ export const POOL_SIZE = 64; // bricks evaluated per wave
 export const PROBE_RAYS = 64;
 export const PROBE_STEPS = 96;
 
-const UNIFORM_SIZE = 960;
+const UNIFORM_SIZE = 976;
 const OPERATOR_BASE = 320;
 const OPERATOR_STRIDE = 80;
+const FIELD_YAW_OFFSET = 960; // f32 index 240
 
 export interface PipelineSet {
   brickVolume: GPUComputePipeline;
@@ -436,6 +437,8 @@ export class GpuEngine {
         f32.fill(0, wBase + 4, wBase + 20);
       }
     }
+
+    f32[FIELD_YAW_OFFSET / 4] = field.fieldYaw; // 960
 
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
   }

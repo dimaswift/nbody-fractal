@@ -144,12 +144,12 @@ export const defaultField = (): FieldParams => ({
   metricMode: 1,
   interactionMode: 0,
   bodyInitMode: 1,
-  fieldMode: 0,
+  fieldMode: 2, // direct sequence
   simplexCount: 5,
-  simplexScale: 0.6,
+  simplexScale: 0.35, // sequence modulation
   simplexOffset: 0.0,
   simplexModes: [1, 2, 3, 4],
-  sequenceValues: generateSequence('sine', 5),
+  sequenceValues: generateSequence('flat', 5),
   warpFactor: 0.0,
   warpType: 0,
   temporalMode: 3,
@@ -159,6 +159,7 @@ export const defaultField = (): FieldParams => ({
   coreVelocity: [0, 0, 0, 0],
   samplingZoom: 0.75,
   fractalPivot: [0, 0, 0, 0],
+  fieldYaw: Math.PI / 4, // 45° — aligns the 5-body bilateral symmetry to the axes
   operators: [
     {
       id: freshId('op'),

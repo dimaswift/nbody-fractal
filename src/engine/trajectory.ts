@@ -71,10 +71,15 @@ function evalTemporal(field: FieldParams, p: Vec3): number {
 export function probeToSample(field: FieldParams, pos3: Vec3): Vec4 {
   const pv = field.fractalPivot;
   const z = field.samplingZoom;
+  // workspace yaw about Y (mirrors compute.wgsl field_at)
+  const yaw = field.fieldYaw ?? 0;
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const rot: Vec3 = [cy * pos3[0] + sy * pos3[2], pos3[1], -sy * pos3[0] + cy * pos3[2]];
   const p3 = [
-    (pos3[0] - pv[0]) * z + pv[0],
-    (pos3[1] - pv[1]) * z + pv[1],
-    (pos3[2] - pv[2]) * z + pv[2],
+    (rot[0] - pv[0]) * z + pv[0],
+    (rot[1] - pv[1]) * z + pv[1],
+    (rot[2] - pv[2]) * z + pv[2],
   ] as Vec3;
   const w = evalTemporal(field, p3);
   const wZoom = (w - pv[3]) * z + pv[3];

@@ -37,6 +37,15 @@ export function SimulationPanel() {
             onChange={selectSource}
           />
         </Row>
+        <Slider
+          label="Yaw (Y°)"
+          value={(field.fieldYaw * 180) / Math.PI}
+          min={-180}
+          max={180}
+          step={1}
+          onChange={(v) => setField({ fieldYaw: (v * Math.PI) / 180 })}
+          format={(v) => `${Math.round(v)}°`}
+        />
         {generated && (
           <>
             <Slider

@@ -92,6 +92,10 @@ struct Uniforms {
     // editable base 1D-spacing sequence (sequence mode); 32 f32 packed as vec4
     sequence_values: array<vec4f, 8>, // 192 .. 320
     operators: array<ShapeOperator, 8>, // 320 .. 960
+    field_yaw: f32,         // 960  workspace rotation about Y (radians)
+    _yaw_pad0: f32,         // 964
+    _yaw_pad1: f32,         // 968
+    _yaw_pad2: f32,         // 972
 };
 
 struct Seed {
@@ -434,7 +438,14 @@ fn operator_mask(p: vec3f) -> f32 {
 // infinite resolution. w_offset probes the raw 4th dimension off the
 // temporal section (for true 4D derivatives).
 
-fn field_at(pos3: vec3f, w_offset: f32) -> f32 {
+fn field_at(pos3_world: vec3f, w_offset: f32) -> f32 {
+    // Workspace yaw: rotate the sample about Y so the fractal's symmetry axis
+    // can be aligned with the world axes. Operators use the ORIGINAL world
+    // position (below), so they stay world-aligned while the fractal rotates.
+    let cy = cos(uniforms.field_yaw);
+    let sy = sin(uniforms.field_yaw);
+    let pos3 = vec3f(cy * pos3_world.x + sy * pos3_world.z, pos3_world.y,
+                     -sy * pos3_world.x + cy * pos3_world.z);
     let pos3_zoomed = (pos3 - uniforms.fractal_pivot.xyz) * uniforms.sampling_zoom + uniforms.fractal_pivot.xyz;
     let w = eval_temporal(pos3_zoomed, 0.0);
     let w_zoomed = (w - uniforms.fractal_pivot.w) * uniforms.sampling_zoom + uniforms.fractal_pivot.w;
@@ -451,7 +462,7 @@ fn field_at(pos3: vec3f, w_offset: f32) -> f32 {
     let iso = uniforms.isovalue;
     let complement = (uniforms.invert_normals & 2u) != 0u;
     let side_val = select(raw, 2.0 * iso - raw, complement);
-    return side_val * operator_mask(pos3);
+    return side_val * operator_mask(pos3_world);
 }
 
 // World position of a global lattice corner index (bitwise identical across
