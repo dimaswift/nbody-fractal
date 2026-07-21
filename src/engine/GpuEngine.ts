@@ -60,6 +60,8 @@ export interface UniformContext {
   waveBrickCount: number;
   probeOrigin: [number, number, number];
   probeStep: number;
+  /** per-volume boolean operators (extraction-only) */
+  operators: Operator[];
 }
 
 const tmpMat = new Matrix4();
@@ -407,7 +409,7 @@ export class GpuEngine {
     f32[35] = ctx.normalDetail;
     // bitfield: bit0 = flip normals (shading), bit1 = extract complement
     u32[36] = (ctx.invertNormals ? 1 : 0) | (ctx.extractComplement ? 2 : 0);
-    u32[37] = Math.min(field.operators.filter((o) => o.enabled).length, MAX_OPERATORS);
+    u32[37] = Math.min(ctx.operators.filter((o) => o.enabled).length, MAX_OPERATORS);
     u32[38] = ctx.waveBrickCount;
     u32[39] = field.bodyInitMode; // 156: 0 diagonal | 1 vertex-oriented
     u32[40] = field.fieldMode; // 160: 0 seeds | 1 simplex collapse
@@ -418,7 +420,7 @@ export class GpuEngine {
     // 192..320: editable base sequence (32 f32 = f32 index 48..79)
     for (let i = 0; i < 32; i++) f32[48 + i] = field.sequenceValues[i] ?? 0;
 
-    const active = field.operators.filter((o) => o.enabled).slice(0, MAX_OPERATORS);
+    const active = ctx.operators.filter((o) => o.enabled).slice(0, MAX_OPERATORS);
     for (let i = 0; i < MAX_OPERATORS; i++) {
       const byteBase = OPERATOR_BASE + i * OPERATOR_STRIDE;
       const wBase = byteBase / 4;

@@ -37,16 +37,22 @@ export interface ShadingParams {
   wireframe: boolean;
 }
 
-export interface BakedObject {
+/**
+ * A Volume is an independent SAMPLER of the shared field. It owns its own
+ * extraction parameters (operators, isovalue, solid/cavity, region, cell size,
+ * refinement, floaters) and its own shading + display transform. All volumes
+ * re-extract when the field changes; editing one volume leaves the others alone.
+ */
+export interface Volume {
   id: string;
   name: string;
   visible: boolean;
-  vertexData: Float32Array;
-  vertexCount: number;
+  sampling: SamplingParams;
+  shading: ShadingParams;
+  /** display transform (pull volumes apart to inspect the fit) */
   position: Vec3;
   rotation: Vec4;
   scale: Vec3;
-  shading: ShadingParams;
 }
 
 export interface TrajectoryProbe {
@@ -59,7 +65,7 @@ export type Selection =
   | { kind: 'none' }
   | { kind: 'seed'; index: number }
   | { kind: 'operator'; id: string }
-  | { kind: 'bake'; id: string }
+  | { kind: 'volume'; id: string }
   | { kind: 'growSeed' }
   | { kind: 'probe'; id: string };
 
@@ -67,8 +73,9 @@ export type GizmoMode = 'translate' | 'rotate' | 'scale';
 
 export interface AppState {
   field: FieldParams;
-  sampling: SamplingParams;
-  shading: ShadingParams;
+  volumes: Volume[];
+  activeVolumeId: string;
+
   /** compile fully-specialized shaders for the final extraction */
   specialize: boolean;
   autoExtract: boolean;
@@ -92,14 +99,14 @@ export interface AppState {
   stats: ExtractionStats | null;
   gpuStatus: 'init' | 'ready' | 'error';
   gpuError: string | null;
-  /** bumped to request a manual re-extraction */
+  /** bumped to request a manual re-extraction of all volumes */
   extractNonce: number;
-
-  bakes: BakedObject[];
 
   // --- actions ---
   setField: (patch: Partial<FieldParams>) => void;
+  /** patch the ACTIVE volume's sampling params */
   setSampling: (patch: Partial<SamplingParams>) => void;
+  /** patch the ACTIVE volume's shading params */
   setShading: (patch: Partial<ShadingParams>) => void;
   set: (patch: Partial<AppState>) => void;
 
@@ -108,16 +115,19 @@ export interface AppState {
   removeSeed: (index: number) => void;
   loadSeedPreset: (name: string) => void;
 
+  // operators act on the active volume
   addOperator: (shapeType?: ShapeType, opType?: OpType) => void;
   updateOperator: (id: string, patch: Partial<Operator>) => void;
   removeOperator: (id: string) => void;
 
+  // volumes
+  addVolume: () => void;
+  removeVolume: (id: string) => void;
+  selectVolume: (id: string) => void;
+  updateVolume: (id: string, patch: Partial<Volume>) => void;
+
   select: (sel: Selection) => void;
   requestExtract: () => void;
-
-  addBake: (bake: BakedObject) => void;
-  updateBake: (id: string, patch: Partial<BakedObject>) => void;
-  removeBake: (id: string) => void;
 
   addProbe: (position?: Vec3) => void;
   updateProbe: (id: string, patch: Partial<TrajectoryProbe>) => void;
@@ -127,7 +137,7 @@ export interface AppState {
 }
 
 // ----------------------------------------------------------------------------
-// Defaults (ported from the original explorer's boot state)
+// Defaults
 // ----------------------------------------------------------------------------
 
 let idCounter = 0;
@@ -160,20 +170,19 @@ export const defaultField = (): FieldParams => ({
   samplingZoom: 0.75,
   fractalPivot: [0, 0, 0, 0],
   fieldYaw: Math.PI / 4, // 45° — aligns the 5-body bilateral symmetry to the axes
-  operators: [
-    {
-      id: freshId('op'),
-      name: 'Bounds',
-      enabled: true,
-      shapeType: ShapeType.Sphere,
-      opType: OpType.Intersect,
-      size: 1.4,
-      falloff: 0.44,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0, 1],
-      scale: [1, 1, 1],
-    },
-  ],
+});
+
+const boundsOperator = (): Operator => ({
+  id: freshId('op'),
+  name: 'Bounds',
+  enabled: true,
+  shapeType: ShapeType.Sphere,
+  opType: OpType.Intersect,
+  size: 1.4,
+  falloff: 0.44,
+  position: [0, 0, 0],
+  rotation: [0, 0, 0, 1],
+  scale: [1, 1, 1],
 });
 
 export const defaultSampling = (): SamplingParams => ({
@@ -191,6 +200,7 @@ export const defaultSampling = (): SamplingParams => ({
   growSeed: [0, 0, 0],
   searchRadius: 2.0,
   removeFloaters: 'tiny',
+  operators: [boundsOperator()],
 });
 
 export const defaultShading = (): ShadingParams => ({
@@ -211,6 +221,33 @@ export const defaultShading = (): ShadingParams => ({
   wireframe: false,
 });
 
+export const defaultVolume = (name: string): Volume => ({
+  id: freshId('vol'),
+  name,
+  visible: true,
+  sampling: defaultSampling(),
+  shading: defaultShading(),
+  position: [0, 0, 0],
+  rotation: [0, 0, 0, 1],
+  scale: [1, 1, 1],
+});
+
+/** Deep clone a volume with fresh ids (operators get new ids too). */
+function cloneVolume(v: Volume, name: string): Volume {
+  const sampling = structuredClone(v.sampling);
+  sampling.operators = sampling.operators.map((op) => ({ ...structuredClone(op), id: freshId('op') }));
+  return {
+    id: freshId('vol'),
+    name,
+    visible: true,
+    sampling,
+    shading: structuredClone(v.shading),
+    position: [...v.position] as Vec3,
+    rotation: [...v.rotation] as Vec4,
+    scale: [...v.scale] as Vec3,
+  };
+}
+
 const newOperator = (shapeType: ShapeType, opType: OpType, n: number): Operator => ({
   id: freshId('op'),
   name: `Operator ${n}`,
@@ -228,10 +265,18 @@ const newOperator = (shapeType: ShapeType, opType: OpType, n: number): Operator 
 // Store
 // ----------------------------------------------------------------------------
 
+const firstVolume = defaultVolume('Volume 1');
+
+/** Patch the active volume via an updater on the volume. */
+function patchActive(s: AppState, fn: (v: Volume) => Volume): Partial<AppState> {
+  return { volumes: s.volumes.map((v) => (v.id === s.activeVolumeId ? fn(v) : v)) };
+}
+
 export const useStore = create<AppState>((set) => ({
   field: defaultField(),
-  sampling: defaultSampling(),
-  shading: defaultShading(),
+  volumes: [firstVolume],
+  activeVolumeId: firstVolume.id,
+
   specialize: true,
   autoExtract: true,
 
@@ -252,11 +297,11 @@ export const useStore = create<AppState>((set) => ({
   gpuError: null,
   extractNonce: 0,
 
-  bakes: [],
-
   setField: (patch) => set((s) => ({ field: { ...s.field, ...patch } })),
-  setSampling: (patch) => set((s) => ({ sampling: { ...s.sampling, ...patch } })),
-  setShading: (patch) => set((s) => ({ shading: { ...s.shading, ...patch } })),
+  setSampling: (patch) =>
+    set((s) => patchActive(s, (v) => ({ ...v, sampling: { ...v.sampling, ...patch } }))),
+  setShading: (patch) =>
+    set((s) => patchActive(s, (v) => ({ ...v, shading: { ...v.shading, ...patch } }))),
   set: (patch) => set(patch),
 
   updateSeed: (index, patch) =>
@@ -269,10 +314,7 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       if (s.field.seeds.length >= 32) return {};
       const seeds = [...s.field.seeds, { position: [0.2, 0.2, 0.2, 0] as Vec4, mass: 1.0 }];
-      return {
-        field: { ...s.field, seeds },
-        selection: { kind: 'seed', index: seeds.length - 1 },
-      };
+      return { field: { ...s.field, seeds }, selection: { kind: 'seed', index: seeds.length - 1 } };
     }),
 
   removeSeed: (index) =>
@@ -290,51 +332,70 @@ export const useStore = create<AppState>((set) => ({
 
   addOperator: (shapeType = ShapeType.Sphere, opType = OpType.Subtract) =>
     set((s) => {
-      if (s.field.operators.length >= 8) return {};
-      const op = newOperator(shapeType, opType, s.field.operators.length + 1);
+      const active = s.volumes.find((v) => v.id === s.activeVolumeId);
+      if (!active || active.sampling.operators.length >= 8) return {};
+      const op = newOperator(shapeType, opType, active.sampling.operators.length + 1);
       return {
-        field: { ...s.field, operators: [...s.field.operators, op] },
+        ...patchActive(s, (v) => ({
+          ...v,
+          sampling: { ...v.sampling, operators: [...v.sampling.operators, op] },
+        })),
         selection: { kind: 'operator', id: op.id },
       };
     }),
 
   updateOperator: (id, patch) =>
-    set((s) => ({
-      field: {
-        ...s.field,
-        operators: s.field.operators.map((op) => (op.id === id ? { ...op, ...patch } : op)),
-      },
-    })),
+    set((s) =>
+      patchActive(s, (v) => ({
+        ...v,
+        sampling: {
+          ...v.sampling,
+          operators: v.sampling.operators.map((op) => (op.id === id ? { ...op, ...patch } : op)),
+        },
+      }))
+    ),
 
   removeOperator: (id) =>
     set((s) => ({
-      field: { ...s.field, operators: s.field.operators.filter((op) => op.id !== id) },
+      ...patchActive(s, (v) => ({
+        ...v,
+        sampling: { ...v.sampling, operators: v.sampling.operators.filter((op) => op.id !== id) },
+      })),
       selection:
-        s.selection.kind === 'operator' && s.selection.id === id
-          ? { kind: 'none' }
-          : s.selection,
+        s.selection.kind === 'operator' && s.selection.id === id ? { kind: 'none' } : s.selection,
     })),
+
+  addVolume: () =>
+    set((s) => {
+      const active = s.volumes.find((v) => v.id === s.activeVolumeId) ?? s.volumes[0];
+      const clone = cloneVolume(active, `Volume ${s.volumes.length + 1}`);
+      return { volumes: [...s.volumes, clone], activeVolumeId: clone.id, selection: { kind: 'none' } };
+    }),
+
+  removeVolume: (id) =>
+    set((s) => {
+      if (s.volumes.length <= 1) return {};
+      const volumes = s.volumes.filter((v) => v.id !== id);
+      const activeVolumeId = s.activeVolumeId === id ? volumes[0].id : s.activeVolumeId;
+      return {
+        volumes,
+        activeVolumeId,
+        selection: s.selection.kind === 'volume' && s.selection.id === id ? { kind: 'none' } : s.selection,
+      };
+    }),
+
+  selectVolume: (id) => set({ activeVolumeId: id }),
+
+  updateVolume: (id, patch) =>
+    set((s) => ({ volumes: s.volumes.map((v) => (v.id === id ? { ...v, ...patch } : v)) })),
 
   select: (sel) => set({ selection: sel }),
   requestExtract: () => set((s) => ({ extractNonce: s.extractNonce + 1 })),
 
-  addBake: (bake) => set((s) => ({ bakes: [...s.bakes, bake] })),
-  updateBake: (id, patch) =>
-    set((s) => ({ bakes: s.bakes.map((b) => (b.id === id ? { ...b, ...patch } : b)) })),
-  removeBake: (id) =>
-    set((s) => ({
-      bakes: s.bakes.filter((b) => b.id !== id),
-      selection: s.selection.kind === 'bake' && s.selection.id === id ? { kind: 'none' } : s.selection,
-    })),
-
   addProbe: (position = [0, 0, 0]) =>
     set((s) => {
       const probe: TrajectoryProbe = { id: freshId('probe'), position, visible: true };
-      return {
-        probes: [...s.probes, probe],
-        showTrajectories: true,
-        selection: { kind: 'probe', id: probe.id },
-      };
+      return { probes: [...s.probes, probe], showTrajectories: true, selection: { kind: 'probe', id: probe.id } };
     }),
   updateProbe: (id, patch) =>
     set((s) => ({ probes: s.probes.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
@@ -352,9 +413,19 @@ export const useStore = create<AppState>((set) => ({
     }),
 }));
 
-/** The selected operator object, or null. */
+// ----------------------------------------------------------------------------
+// Selectors
+// ----------------------------------------------------------------------------
+
+export const getActiveVolume = (s: AppState): Volume =>
+  s.volumes.find((v) => v.id === s.activeVolumeId) ?? s.volumes[0];
+
+/** Hook: the active volume (re-renders when it changes). */
+export const useActiveVolume = (): Volume => useStore(getActiveVolume);
+
+/** The selected operator object (from the active volume), or null. */
 export const selectedOperator = (s: AppState): Operator | null => {
   if (s.selection.kind !== 'operator') return null;
   const id = s.selection.id;
-  return s.field.operators.find((op) => op.id === id) ?? null;
+  return getActiveVolume(s).sampling.operators.find((op) => op.id === id) ?? null;
 };

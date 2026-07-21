@@ -1,29 +1,38 @@
 // Named configuration save/load (localStorage) + JSON file export/import.
-// Schema v2 — not compatible with the legacy explorer's configs.
+// Schema v3: field + volumes (v2 configs with sampling/shading still load).
 
 import type { FieldParams, SamplingParams } from '../engine/types';
-import { defaultField, defaultSampling, defaultShading, useStore, type ShadingParams } from './store';
+import {
+  defaultField,
+  defaultSampling,
+  defaultShading,
+  defaultVolume,
+  useStore,
+  type ShadingParams,
+  type Volume,
+} from './store';
 
 const LS_KEY = 'nbody-fractal-studio-configs-v2';
 
 export interface StudioConfig {
-  version: 2;
+  version: 2 | 3;
   name: string;
   savedAt: string;
   field: FieldParams;
-  sampling: SamplingParams;
-  shading: ShadingParams;
+  volumes?: Volume[];
+  // legacy v2 single-sampler fields
+  sampling?: SamplingParams;
+  shading?: ShadingParams;
 }
 
 export function currentConfig(name: string): StudioConfig {
   const s = useStore.getState();
   return {
-    version: 2,
+    version: 3,
     name,
     savedAt: new Date().toISOString(),
     field: structuredClone(s.field),
-    sampling: structuredClone(s.sampling),
-    shading: structuredClone(s.shading),
+    volumes: structuredClone(s.volumes),
   };
 }
 
@@ -51,18 +60,39 @@ export function applyConfig(cfg: StudioConfig) {
   const store = useStore.getState();
   // Merge over defaults so configs stay loadable when fields are added later
   const field = { ...defaultField(), ...cfg.field };
-  // Configs saved before body-init mode existed were authored under the
-  // legacy diagonal broadcast — pin them to mode 0 so they load unchanged
-  // (rather than inheriting the new vertex-oriented default).
   if ((cfg.field as Partial<typeof field>).bodyInitMode === undefined) {
     field.bodyInitMode = 0;
   }
-  store.set({
-    field,
-    sampling: { ...defaultSampling(), ...cfg.sampling },
-    shading: { ...defaultShading(), ...cfg.shading },
-    selection: { kind: 'none' },
-  });
+  // Operators moved from field to per-volume; drop any legacy field.operators.
+  delete (field as { operators?: unknown }).operators;
+
+  let volumes: Volume[];
+  if (cfg.volumes && cfg.volumes.length > 0) {
+    volumes = cfg.volumes.map((v) => ({
+      ...defaultVolume(v.name),
+      ...v,
+      sampling: { ...defaultSampling(), ...v.sampling },
+      shading: { ...defaultShading(), ...v.shading },
+    }));
+  } else {
+    // legacy v2: build a single volume from the config's sampling+shading,
+    // migrating any operators that lived on the field.
+    const base = defaultVolume('Volume 1');
+    const legacyOps = (cfg.field as { operators?: SamplingParams['operators'] }).operators;
+    volumes = [
+      {
+        ...base,
+        sampling: {
+          ...defaultSampling(),
+          ...cfg.sampling,
+          operators: legacyOps ?? cfg.sampling?.operators ?? defaultSampling().operators,
+        },
+        shading: { ...defaultShading(), ...cfg.shading },
+      },
+    ];
+  }
+
+  store.set({ field, volumes, activeVolumeId: volumes[0].id, selection: { kind: 'none' } });
   store.requestExtract();
 }
 

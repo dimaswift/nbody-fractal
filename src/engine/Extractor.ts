@@ -142,6 +142,7 @@ export class Extractor {
         waveBrickCount,
         probeOrigin: sampling.growSeed,
         probeStep: Math.max(1e-6, sampling.searchRadius) / PROBE_STEPS,
+        operators: sampling.operators,
       });
 
     // ------------------------------------------------------------------

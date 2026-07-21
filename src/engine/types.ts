@@ -69,7 +69,6 @@ export interface FieldParams {
   fractalPivot: Vec4;
   /** workspace rotation about the Y axis (radians) applied to the fractal sample */
   fieldYaw: number;
-  operators: Operator[];
 }
 
 export type SamplingMode = 'box' | 'flood';
@@ -98,6 +97,8 @@ export interface SamplingParams {
   /** drop detached pieces: 'tiny' removes components < 1% of the largest,
    *  'largest' keeps only the biggest connected component */
   removeFloaters: 'off' | 'tiny' | 'largest';
+  /** boolean geometry operators — per-volume (each sampler carves differently) */
+  operators: Operator[];
 }
 
 export interface ExtractionRequest {

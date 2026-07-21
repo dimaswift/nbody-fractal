@@ -13,7 +13,7 @@ import {
   SphereGeometry,
 } from 'three';
 import { OpType, ShapeType, type Operator } from '../engine/types';
-import { useStore, type GizmoMode } from '../state/store';
+import { useActiveVolume, useStore, type GizmoMode } from '../state/store';
 
 const OP_COLORS: Record<number, string> = {
   [OpType.Intersect]: '#4b8df8',
@@ -122,7 +122,7 @@ function OperatorProxy({
 }
 
 export function OperatorGizmos() {
-  const operators = useStore((s) => s.field.operators);
+  const operators = useActiveVolume().sampling.operators;
   const selection = useStore((s) => s.selection);
   const gizmoMode = useStore((s) => s.gizmoMode);
   const show = useStore((s) => s.showOperators);

@@ -1,8 +1,7 @@
-// Connects the zustand store to the GPU engine:
-//  - boots the device
-//  - watches field/sampling changes and schedules extractions
-//  - coarse box previews while a gizmo is dragged, full extraction on release
-//  - publishes progressive mesh updates to subscribers (viewport)
+// Connects the zustand store to the GPU engine for MULTIPLE volumes that share
+// one field. Each volume is an independent sampler with its own extraction
+// params; all re-extract when the field changes, only the edited one re-extracts
+// when its own params change. Extractions are serialized (shared GPU buffers).
 
 import { GpuEngine } from './GpuEngine';
 import { Extractor } from './Extractor';
@@ -15,11 +14,11 @@ import {
   type SamplingParams,
   type Vec3,
 } from './types';
-import { useStore } from '../state/store';
+import { useStore, getActiveVolume, type Volume } from '../state/store';
 
 type MeshListener = (mesh: MeshUpdate) => void;
 
-class LiveMeshBus {
+export class LiveMeshBus {
   mesh: MeshUpdate = { vertexData: new Float32Array(0), vertexCount: 0, refined: false };
   private listeners = new Set<MeshListener>();
 
@@ -34,24 +33,35 @@ class LiveMeshBus {
     return () => this.listeners.delete(fn);
   }
 
-  /** Compact copy of the current mesh (for baking / export). */
   snapshot(): { vertexData: Float32Array; vertexCount: number } {
     const n = this.mesh.vertexCount * 8;
-    return {
-      vertexData: this.mesh.vertexData.slice(0, n),
-      vertexCount: this.mesh.vertexCount,
-    };
+    return { vertexData: this.mesh.vertexData.slice(0, n), vertexCount: this.mesh.vertexCount };
   }
 }
 
-export const liveMesh = new LiveMeshBus();
+const buses = new Map<string, LiveMeshBus>();
+export function getMeshBus(volumeId: string): LiveMeshBus {
+  let b = buses.get(volumeId);
+  if (!b) {
+    b = new LiveMeshBus();
+    buses.set(volumeId, b);
+  }
+  return b;
+}
+export function snapshotVolumeMesh(volumeId: string) {
+  return buses.get(volumeId)?.snapshot() ?? { vertexData: new Float32Array(0), vertexCount: 0 };
+}
 
 let engine: GpuEngine | null = null;
 let extractor: Extractor | null = null;
 let currentHandle: ExtractionHandle | null = null;
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let lastBounds: ExtractionStats['bounds'] = null;
 let started = false;
+
+const dirty = new Set<string>();
+const lastBounds = new Map<string, ExtractionStats['bounds']>();
+let processing = false;
+let fullTimer: ReturnType<typeof setTimeout> | null = null;
+let previewTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function getEngine(): GpuEngine | null {
   return engine;
@@ -74,197 +84,205 @@ export async function startOrchestrator(): Promise<void> {
     return;
   }
 
-  // Watch the slices that require re-extraction
-  let prev = pickExtractionSlice(store.getState());
-  let dragDirty = false; // did the current drag actually change extraction inputs?
+  let prev = pickSlice(store.getState());
+  // seed: extract every existing volume
+  for (const v of store.getState().volumes) dirty.add(v.id);
+  scheduleFull();
+
   store.subscribe((s) => {
-    const cur = pickExtractionSlice(s);
-    if (cur === prev) return;
-    const nonceChanged = cur.nonce !== prev.nonce;
-    const paramsChanged =
-      cur.fieldJson !== prev.fieldJson ||
-      cur.samplingJson !== prev.samplingJson ||
-      cur.specialize !== prev.specialize;
-    // grow-seed / search-radius edits never need live previews — the field
-    // is unchanged; they only matter for the next full flood.
-    const seedMoved = cur.growJson !== prev.growJson;
+    const cur = pickSlice(s);
+
+    // volumes added/removed
+    for (const id of cur.volumeIds) {
+      if (!prev.volumeIds.includes(id)) dirty.add(id);
+    }
+    for (const id of prev.volumeIds) {
+      if (!cur.volumeIds.includes(id)) {
+        buses.delete(id);
+        lastBounds.delete(id);
+        dirty.delete(id);
+      }
+    }
+
+    // field / global change -> all volumes dirty
+    const fieldChanged =
+      cur.fieldJson !== prev.fieldJson || cur.specialize !== prev.specialize || cur.nonce !== prev.nonce;
+    if (fieldChanged) for (const id of cur.volumeIds) dirty.add(id);
+
+    // per-volume sampling change -> that volume dirty
+    for (const id of cur.volumeIds) {
+      if (cur.samplingJson[id] !== undefined && cur.samplingJson[id] !== prev.samplingJson[id]) {
+        dirty.add(id);
+      }
+    }
+
     const justReleased = prev.isInteracting && !cur.isInteracting;
     prev = cur;
 
     if (cur.isInteracting) {
-      if (paramsChanged || seedMoved) dragDirty = true;
-      if (paramsChanged) schedule(true);
-      return;
-    }
-
-    const releaseNeedsFull = justReleased && dragDirty;
-    if (justReleased) dragDirty = false;
-    if (nonceChanged || releaseNeedsFull || ((paramsChanged || seedMoved) && s.autoExtract)) {
-      schedule(false);
+      // preview only the active volume while dragging
+      if (dirty.size > 0) {
+        dirty.clear();
+        schedulePreview();
+      }
+    } else if (dirty.size > 0 || justReleased) {
+      if (justReleased) dirty.add(getActiveVolume(s).id);
+      scheduleFull();
     }
   });
-
-  // First extraction
-  schedule(false);
 }
 
-interface ExtractionSlice {
+interface Slice {
   fieldJson: string;
-  samplingJson: string;
-  growJson: string;
   specialize: boolean;
   nonce: number;
   isInteracting: boolean;
+  volumeIds: string[];
+  samplingJson: Record<string, string>;
 }
 
-let sliceCache: ExtractionSlice | null = null;
-function pickExtractionSlice(s: ReturnType<typeof useStore.getState>): ExtractionSlice {
-  const { growSeed, searchRadius, ...restSampling } = s.sampling;
-  const fieldJson = JSON.stringify(s.field);
-  const samplingJson = JSON.stringify(restSampling);
-  const growJson = JSON.stringify([growSeed, searchRadius]);
-  if (
-    sliceCache &&
-    sliceCache.fieldJson === fieldJson &&
-    sliceCache.samplingJson === samplingJson &&
-    sliceCache.growJson === growJson &&
-    sliceCache.specialize === s.specialize &&
-    sliceCache.nonce === s.extractNonce &&
-    sliceCache.isInteracting === s.isInteracting
-  ) {
-    return sliceCache;
-  }
-  sliceCache = {
-    fieldJson,
-    samplingJson,
-    growJson,
+function pickSlice(s: ReturnType<typeof useStore.getState>): Slice {
+  const samplingJson: Record<string, string> = {};
+  for (const v of s.volumes) samplingJson[v.id] = JSON.stringify(v.sampling);
+  return {
+    fieldJson: JSON.stringify(s.field),
     specialize: s.specialize,
     nonce: s.extractNonce,
     isInteracting: s.isInteracting,
+    volumeIds: s.volumes.map((v) => v.id),
+    samplingJson,
   };
-  return sliceCache;
 }
 
-function schedule(preview: boolean) {
-  const s = useStore.getState();
-  if (s.gpuStatus !== 'ready') return;
-
-  if (debounceTimer) clearTimeout(debounceTimer);
-  const delay = preview ? 30 : 200;
-  debounceTimer = setTimeout(() => {
-    debounceTimer = null;
-    run(preview);
-  }, delay);
+function scheduleFull() {
+  if (fullTimer) clearTimeout(fullTimer);
+  fullTimer = setTimeout(() => {
+    fullTimer = null;
+    void processQueue();
+  }, 200);
 }
 
-function run(preview: boolean) {
-  if (!extractor) return;
-  const s = useStore.getState();
+function schedulePreview() {
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    previewTimer = null;
+    void runPreview();
+  }, 30);
+}
 
+async function processQueue() {
+  if (processing || !extractor) return;
+  processing = true;
+  try {
+    while (dirty.size > 0) {
+      const id = dirty.values().next().value as string;
+      dirty.delete(id);
+      const vol = useStore.getState().volumes.find((v) => v.id === id);
+      if (!vol || !vol.visible) continue;
+      await runFull(vol);
+    }
+  } finally {
+    processing = false;
+  }
+}
+
+function runFull(vol: Volume): Promise<void> {
+  if (!extractor) return Promise.resolve();
   currentHandle?.cancel();
-
-  const sampling = preview ? previewSampling(s.sampling) : s.sampling;
-  const req: ExtractionRequest = {
-    field: s.field,
-    sampling,
-    specialize: preview ? false : s.specialize,
-  };
-
-  const setState = useStore.getState().set;
+  const s = useStore.getState();
+  const req: ExtractionRequest = { field: s.field, sampling: vol.sampling, specialize: s.specialize };
+  const setState = s.set;
+  const bus = getMeshBus(vol.id);
 
   currentHandle = extractor.extract(req, {
     onPhase: (phase) => {
       if (phase !== 'cancelled') setState({ phase });
     },
     onMesh: (mesh, stats) => {
-      // Previews must never feed lastBounds: a preview's bounds are derived
-      // FROM lastBounds, and writing them back compounds the brick snap +
-      // margin every tick — the runaway that coarsened drags into a cube.
-      if (!preview) lastBounds = stats.bounds ?? lastBounds;
+      lastBounds.set(vol.id, stats.bounds ?? lastBounds.get(vol.id) ?? null);
       setState({ stats });
-      liveMesh.publish(mesh);
+      bus.publish(mesh);
     },
     onDone: (mesh, stats) => {
-      if (!preview) lastBounds = stats.bounds ?? lastBounds;
+      lastBounds.set(vol.id, stats.bounds ?? lastBounds.get(vol.id) ?? null);
       setState({ stats, phase: 'done' });
-      if (mesh) liveMesh.publish(mesh);
+      if (mesh) bus.publish(mesh);
     },
     onError: (err) => {
       console.error('[extraction]', err);
       setState({ gpuError: err.message });
     },
   });
+  return currentHandle.done;
 }
 
-/** Coarse box pass over the last known bounds — fast enough to run per drag.
- *
- *  Fidelity matters: the preview cell is always the full cell size × 2^k, so
- *  preview lattice planes are a subset of the full lattice — the coarse mesh
- *  agrees with the final one far better than an arbitrary cell size would.
- *  k is the smallest power that fits the bounds into the quality's brick cap. */
-function previewSampling(s: SamplingParams): SamplingParams {
+function runPreview() {
+  if (!extractor) return;
+  const s = useStore.getState();
+  const vol = getActiveVolume(s);
+  if (!vol.visible) return;
+  currentHandle?.cancel();
+  const bus = getMeshBus(vol.id);
+  const req: ExtractionRequest = {
+    field: s.field,
+    sampling: previewSampling(vol.sampling, lastBounds.get(vol.id) ?? null),
+    specialize: false,
+  };
+  currentHandle = extractor.extract(req, {
+    onPhase: (phase) => {
+      if (phase !== 'cancelled') s.set({ phase });
+    },
+    onMesh: (mesh, stats) => {
+      s.set({ stats });
+      bus.publish(mesh);
+    },
+    onDone: (mesh, stats) => {
+      s.set({ stats, phase: 'done' });
+      if (mesh) bus.publish(mesh);
+    },
+  });
+}
+
+/** Coarse box pass over the volume's last known bounds — fast per-drag preview. */
+function previewSampling(sp: SamplingParams, bounds: ExtractionStats['bounds']): SamplingParams {
   let center: Vec3;
   let half: number;
-  if (lastBounds) {
+  if (bounds) {
     center = [
-      (lastBounds.min[0] + lastBounds.max[0]) / 2,
-      (lastBounds.min[1] + lastBounds.max[1]) / 2,
-      (lastBounds.min[2] + lastBounds.max[2]) / 2,
+      (bounds.min[0] + bounds.max[0]) / 2,
+      (bounds.min[1] + bounds.max[1]) / 2,
+      (bounds.min[2] + bounds.max[2]) / 2,
     ];
     half =
-      Math.max(
-        lastBounds.max[0] - lastBounds.min[0],
-        lastBounds.max[1] - lastBounds.min[1],
-        lastBounds.max[2] - lastBounds.min[2]
-      ) / 2;
-    half *= 1.1; // margin: a dragged operator may push the surface slightly out
-  } else if (s.mode === 'box') {
-    center = [...s.boxCenter] as Vec3;
-    half = s.boxHalfExtent;
+      Math.max(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2]) / 2;
+    half *= 1.1;
+  } else if (sp.mode === 'box') {
+    center = [...sp.boxCenter] as Vec3;
+    half = sp.boxHalfExtent;
   } else {
-    center = [...s.growSeed] as Vec3;
-    half = s.searchRadius;
+    center = [...sp.growSeed] as Vec3;
+    half = sp.searchRadius;
   }
-  half = Math.max(half, s.cellSize * BRICK_CELLS);
+  half = Math.max(half, sp.cellSize * BRICK_CELLS);
 
   const quality = useStore.getState().previewQuality;
   const brickCap = quality === 'high' ? 216 : quality === 'balanced' ? 64 : 8;
-
   let k = 1;
   while (k < 6) {
-    const bricksPerAxis = Math.ceil((2 * half) / (s.cellSize * (1 << k) * BRICK_CELLS)) + 1;
+    const bricksPerAxis = Math.ceil((2 * half) / (sp.cellSize * (1 << k) * BRICK_CELLS)) + 1;
     if (bricksPerAxis ** 3 <= brickCap) break;
     k++;
   }
-  const cell = s.cellSize * (1 << k);
-
+  const cell = sp.cellSize * (1 << k);
   return {
-    ...s,
+    ...sp,
     mode: 'box',
     boxCenter: center,
     boxHalfExtent: half,
     cellSize: cell,
     maxBricks: brickCap * 2,
     vertexBudget: 786432,
-    refineMode: Math.min(s.refineMode, 1),
+    refineMode: Math.min(sp.refineMode, 1),
     removeFloaters: 'off',
   };
-}
-
-/** Bake the current live mesh into a scene object. */
-export function bakeCurrentMesh(): void {
-  const snap = liveMesh.snapshot();
-  if (snap.vertexCount === 0) return;
-  const s = useStore.getState();
-  s.addBake({
-    id: `bake-${Date.now().toString(36)}`,
-    name: `Bake ${s.bakes.length + 1}`,
-    visible: true,
-    vertexData: snap.vertexData,
-    vertexCount: snap.vertexCount,
-    position: [0, 0, 0],
-    rotation: [0, 0, 0, 1],
-    scale: [1, 1, 1],
-    shading: structuredClone(s.shading),
-  });
 }

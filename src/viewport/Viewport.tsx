@@ -1,11 +1,10 @@
 import { Canvas } from '@react-three/fiber';
 import { GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei';
 import { useStore } from '../state/store';
-import { ExtractionMesh } from './ExtractionMesh';
+import { VolumeMeshes } from './VolumeMeshes';
 import { OperatorGizmos } from './OperatorGizmos';
 import { SeedGizmos } from './SeedGizmos';
 import { GrowSeedGizmo } from './GrowSeedGizmo';
-import { BakedMeshes } from './BakedMeshes';
 import { TrajectoryView } from './TrajectoryView';
 
 export function Viewport() {
@@ -22,8 +21,7 @@ export function Viewport() {
       <ambientLight intensity={0.45} />
       <directionalLight position={[5, 10, 7]} intensity={1.1} />
 
-      <ExtractionMesh />
-      <BakedMeshes />
+      <VolumeMeshes />
       <OperatorGizmos />
       <SeedGizmos />
       <GrowSeedGizmo />

@@ -1,11 +1,11 @@
 // Surface shading — palette + color source + lighting.
 
 import { PALETTES, paletteCssGradient } from '../state/presets';
-import { useStore } from '../state/store';
+import { useActiveVolume, useStore } from '../state/store';
 import { Row, Section, SelectField, Slider, Toggle } from './controls';
 
 export function ShadingPanel() {
-  const shading = useStore((s) => s.shading);
+  const shading = useActiveVolume().shading;
   const setShading = useStore((s) => s.setShading);
 
   return (

@@ -5,13 +5,14 @@
 import { TransformControls } from '@react-three/drei';
 import { useEffect, useRef } from 'react';
 import { Group } from 'three';
-import { useStore } from '../state/store';
+import { useActiveVolume, useStore } from '../state/store';
 
 export function GrowSeedGizmo() {
   const ref = useRef<Group>(null);
-  const growSeed = useStore((s) => s.sampling.growSeed);
-  const searchRadius = useStore((s) => s.sampling.searchRadius);
-  const mode = useStore((s) => s.sampling.mode);
+  const sampling = useActiveVolume().sampling;
+  const growSeed = sampling.growSeed;
+  const searchRadius = sampling.searchRadius;
+  const mode = sampling.mode;
   const selection = useStore((s) => s.selection);
   const select = useStore((s) => s.select);
   const setSampling = useStore((s) => s.setSampling);

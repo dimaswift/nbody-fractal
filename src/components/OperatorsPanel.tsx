@@ -1,7 +1,7 @@
 // Boolean geometry operators — ordered list, gizmo-selectable.
 
 import { OpType, ShapeType } from '../engine/types';
-import { useStore } from '../state/store';
+import { useActiveVolume, useStore } from '../state/store';
 import { Button, NumberField, Row, Section, SelectField, Slider } from './controls';
 
 const SHAPE_OPTIONS: [number, string][] = [
@@ -20,7 +20,7 @@ const OP_OPTIONS: [number, string][] = [
 ];
 
 export function OperatorsPanel() {
-  const operators = useStore((s) => s.field.operators);
+  const operators = useActiveVolume().sampling.operators;
   const selection = useStore((s) => s.selection);
   const gizmoMode = useStore((s) => s.gizmoMode);
   const set = useStore((s) => s.set);

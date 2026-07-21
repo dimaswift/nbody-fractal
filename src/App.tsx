@@ -3,7 +3,7 @@ import { startOrchestrator } from './engine/orchestrator';
 import { useStore } from './state/store';
 import { Viewport } from './viewport/Viewport';
 import { ConfigBar } from './components/ConfigBar';
-import { ObjectsPanel } from './components/ObjectsPanel';
+import { VolumesPanel } from './components/VolumesPanel';
 import { OperatorsPanel } from './components/OperatorsPanel';
 import { SamplingPanel } from './components/SamplingPanel';
 import { SeedsPanel } from './components/SeedsPanel';
@@ -85,11 +85,11 @@ export default function App() {
       </main>
 
       <aside className="sidebar sidebar-right">
+        <VolumesPanel />
         <SamplingPanel />
         <OperatorsPanel />
-        <TrajectoryPanel />
-        <ObjectsPanel />
         <ShadingPanel />
+        <TrajectoryPanel />
       </aside>
 
       <StatusBar />

@@ -1,10 +1,10 @@
 // Extraction / adaptive sampling controls.
 
-import { useStore } from '../state/store';
+import { useActiveVolume, useStore } from '../state/store';
 import { Button, NumberField, Row, Section, SelectField, Slider, Toggle } from './controls';
 
 export function SamplingPanel() {
-  const sampling = useStore((s) => s.sampling);
+  const sampling = useActiveVolume().sampling;
   const setSampling = useStore((s) => s.setSampling);
   const autoExtract = useStore((s) => s.autoExtract);
   const previewQuality = useStore((s) => s.previewQuality);
