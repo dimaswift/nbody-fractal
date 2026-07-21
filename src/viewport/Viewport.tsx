@@ -6,6 +6,7 @@ import { OperatorGizmos } from './OperatorGizmos';
 import { SeedGizmos } from './SeedGizmos';
 import { GrowSeedGizmo } from './GrowSeedGizmo';
 import { BakedMeshes } from './BakedMeshes';
+import { TrajectoryView } from './TrajectoryView';
 
 export function Viewport() {
   const select = useStore((s) => s.select);
@@ -26,6 +27,7 @@ export function Viewport() {
       <OperatorGizmos />
       <SeedGizmos />
       <GrowSeedGizmo />
+      <TrajectoryView />
 
       <Grid
         position={[0, -1.8, 0]}

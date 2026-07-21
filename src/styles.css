@@ -355,6 +355,18 @@ input:focus {
   border: 1px solid var(--border);
 }
 
+.readout {
+  display: flex;
+  gap: 12px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.readout b {
+  color: var(--text);
+}
+
 /* --- status bar --- */
 
 .statusbar {

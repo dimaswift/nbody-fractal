@@ -10,6 +10,7 @@ import { SeedsPanel } from './components/SeedsPanel';
 import { ShadingPanel } from './components/ShadingPanel';
 import { SimulationPanel } from './components/SimulationPanel';
 import { StatusBar } from './components/StatusBar';
+import { TrajectoryPanel } from './components/TrajectoryPanel';
 
 function useKeyboardShortcuts() {
   const set = useStore((s) => s.set);
@@ -34,6 +35,9 @@ function useKeyboardShortcuts() {
         case 'g':
           requestExtract();
           break;
+        case 't':
+          useStore.getState().addProbe([0, 0, 0]);
+          break;
         case 'escape':
           select({ kind: 'none' });
           break;
@@ -57,7 +61,7 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <h1>N-Body Fractal Studio</h1>
-        <span className="topbar-hint">W/E/R gizmo · G extract · Esc deselect</span>
+        <span className="topbar-hint">W/E/R gizmo · G extract · T sample point · Esc deselect</span>
       </header>
 
       <aside className="sidebar sidebar-left">
@@ -80,6 +84,7 @@ export default function App() {
       <aside className="sidebar sidebar-right">
         <SamplingPanel />
         <OperatorsPanel />
+        <TrajectoryPanel />
         <ObjectsPanel />
         <ShadingPanel />
       </aside>

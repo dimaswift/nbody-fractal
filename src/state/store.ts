@@ -47,12 +47,19 @@ export interface BakedObject {
   shading: ShadingParams;
 }
 
+export interface TrajectoryProbe {
+  id: string;
+  position: Vec3;
+  visible: boolean;
+}
+
 export type Selection =
   | { kind: 'none' }
   | { kind: 'seed'; index: number }
   | { kind: 'operator'; id: string }
   | { kind: 'bake'; id: string }
-  | { kind: 'growSeed' };
+  | { kind: 'growSeed' }
+  | { kind: 'probe'; id: string };
 
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
 
@@ -72,6 +79,12 @@ export interface AppState {
   showSeeds: boolean;
   /** drag-preview resolution (does not affect the final extraction) */
   previewQuality: 'fast' | 'balanced' | 'high';
+
+  /** trajectory inspector: sample points whose N-body evolution is drawn */
+  probes: TrajectoryProbe[];
+  showTrajectories: boolean;
+  /** Verlet steps to integrate for display (may exceed field.steps) */
+  trajectorySteps: number;
 
   phase: ExtractionPhase;
   stats: ExtractionStats | null;
@@ -103,6 +116,10 @@ export interface AppState {
   addBake: (bake: BakedObject) => void;
   updateBake: (id: string, patch: Partial<BakedObject>) => void;
   removeBake: (id: string) => void;
+
+  addProbe: (position?: Vec3) => void;
+  updateProbe: (id: string, patch: Partial<TrajectoryProbe>) => void;
+  removeProbe: (id: string) => void;
 }
 
 // ----------------------------------------------------------------------------
@@ -212,6 +229,10 @@ export const useStore = create<AppState>((set) => ({
   showSeeds: true,
   previewQuality: 'balanced',
 
+  probes: [],
+  showTrajectories: true,
+  trajectorySteps: 24,
+
   phase: 'idle',
   stats: null,
   gpuStatus: 'init',
@@ -291,6 +312,23 @@ export const useStore = create<AppState>((set) => ({
     set((s) => ({
       bakes: s.bakes.filter((b) => b.id !== id),
       selection: s.selection.kind === 'bake' && s.selection.id === id ? { kind: 'none' } : s.selection,
+    })),
+
+  addProbe: (position = [0, 0, 0]) =>
+    set((s) => {
+      const probe: TrajectoryProbe = { id: freshId('probe'), position, visible: true };
+      return {
+        probes: [...s.probes, probe],
+        showTrajectories: true,
+        selection: { kind: 'probe', id: probe.id },
+      };
+    }),
+  updateProbe: (id, patch) =>
+    set((s) => ({ probes: s.probes.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
+  removeProbe: (id) =>
+    set((s) => ({
+      probes: s.probes.filter((p) => p.id !== id),
+      selection: s.selection.kind === 'probe' && s.selection.id === id ? { kind: 'none' } : s.selection,
     })),
 }));
 
