@@ -12,15 +12,15 @@ export function VolumesPanel() {
   const volumes = useStore((s) => s.volumes);
   const activeId = useStore((s) => s.activeVolumeId);
   const fieldNonce = useStore((s) => s.fieldNonce);
-  const selection = useStore((s) => s.selection);
   const addVolume = useStore((s) => s.addVolume);
   const removeVolume = useStore((s) => s.removeVolume);
   const selectVolume = useStore((s) => s.selectVolume);
   const updateVolume = useStore((s) => s.updateVolume);
   const select = useStore((s) => s.select);
 
-  // the active volume auto-conforms, so it never counts as stale in the UI
-  const staleOf = (v: Volume) => v.id !== activeId && isVolumeStale(v, fieldNonce);
+  // an auto-conforming active volume is always fresh, so never shown stale
+  const staleOf = (v: Volume) =>
+    isVolumeStale(v, fieldNonce) && !(v.id === activeId && v.autoConform);
   const anyStale = volumes.some(staleOf);
 
   const exportVolume = (id: string, name: string) => {
@@ -53,7 +53,6 @@ export function VolumesPanel() {
       </div>
       {volumes.map((v) => {
         const active = v.id === activeId;
-        const selected = selection.kind === 'volume' && selection.id === v.id;
         const stale = staleOf(v);
         return (
           <div
@@ -119,15 +118,38 @@ export function VolumesPanel() {
               <span>{v.sampling.extractComplement ? 'cavity' : 'solid'}</span>
               <span>iso {v.sampling.isovalue.toFixed(2)}</span>
               <span>{v.sampling.operators.filter((o) => o.enabled).length} ops</span>
-              {selected && <span className="hint">move with gizmo</span>}
+              <label className="hint" onClick={(e) => e.stopPropagation()} style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={v.autoConform}
+                  onChange={(e) => {
+                    updateVolume(v.id, { autoConform: e.target.checked });
+                    // turning it on for a stale active volume conforms it now
+                    if (e.target.checked && v.id === activeId && isVolumeStale(v, fieldNonce)) {
+                      conformVolume(v.id);
+                    }
+                  }}
+                />
+                auto-conform
+              </label>
+              <button
+                className="btn btn-ghost"
+                title="Reset this volume to its original position"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  updateVolume(v.id, { position: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
+                }}
+              >
+                ⌂
+              </button>
             </div>
           </div>
         );
       })}
       <span className="hint">
-        Every volume samples the same field. Editing the field (left) re-extracts all; editing a volume's
-        sampling / operators / shading changes only that one. Select a volume to move it with the gizmo, so
-        solid + cavity pairs can be pulled apart to check the fit.
+        Every volume samples the same field. A field change re-extracts the active volume (if auto-conform is
+        on) and marks the others stale — hit Conform to update them. Select a volume to move it with the gizmo;
+        ⌂ snaps it back to the origin.
       </span>
     </Section>
   );

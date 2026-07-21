@@ -119,18 +119,21 @@ export async function startOrchestrator(): Promise<void> {
       }
     }
 
-    // A field change auto-conforms the ACTIVE volume (with a low-res preview
-    // while dragging), so the volume you're working on stays live like before.
-    // Every OTHER volume is left stale (fieldNonce) until an explicit Conform.
+    // A field change auto-conforms the ACTIVE volume when its auto-conform is
+    // on (low-res preview while dragging), so the volume you're working on stays
+    // live. Every OTHER volume is left stale until an explicit Conform.
     if (cur.fieldJson !== prev.fieldJson) {
-      dirty.add(cur.activeId);
-      if (cur.isInteracting) interactionVolumeId = cur.activeId;
+      const av = s.volumes.find((v) => v.id === cur.activeId);
+      if (av?.autoConform) {
+        dirty.add(cur.activeId);
+        if (cur.isInteracting) interactionVolumeId = cur.activeId;
+      }
     }
 
-    // Selecting a stale volume conforms it — the active volume is always fresh.
+    // Selecting a stale auto-conform volume conforms it (keeps the active fresh).
     if (cur.activeId !== prev.activeId) {
       const av = s.volumes.find((v) => v.id === cur.activeId);
-      if (av && isVolumeStale(av, s.fieldNonce)) dirty.add(cur.activeId);
+      if (av?.autoConform && isVolumeStale(av, s.fieldNonce)) dirty.add(cur.activeId);
     }
 
     const justReleased = prev.isInteracting && !cur.isInteracting;

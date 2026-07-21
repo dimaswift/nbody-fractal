@@ -55,6 +55,8 @@ export interface Volume {
   scale: Vec3;
   /** fieldNonce this volume was last extracted at; < current fieldNonce => stale */
   conformedNonce: number;
+  /** when active, re-extract (with preview) as the field changes */
+  autoConform: boolean;
 }
 
 export interface TrajectoryProbe {
@@ -166,14 +168,14 @@ export const defaultField = (): FieldParams => ({
   sequenceValues: generateSequence('flat', 5),
   warpFactor: 0.0,
   warpType: 0,
-  temporalMode: 3,
+  temporalMode: 1, // constant
   temporalScale: -0.35,
   temporalOffset: 0.05,
   temporalParam: 1.55,
   coreVelocity: [0, 0, 0, 0],
   samplingZoom: 0.75,
   fractalPivot: [0, 0, 0, 0],
-  fieldYaw: Math.PI / 4, // 45° — aligns the 5-body bilateral symmetry to the axes
+  fieldYaw: Math.PI / 3, // 60° — aligns the 5-body bilateral symmetry to the axes
 });
 
 const boundsOperator = (): Operator => ({
@@ -182,8 +184,8 @@ const boundsOperator = (): Operator => ({
   enabled: true,
   shapeType: ShapeType.Sphere,
   opType: OpType.Intersect,
-  size: 1.4,
-  falloff: 0.44,
+  size: 1.0,
+  falloff: 0.5,
   position: [0, 0, 0],
   rotation: [0, 0, 0, 1],
   scale: [1, 1, 1],
@@ -194,7 +196,7 @@ export const defaultSampling = (): SamplingParams => ({
   cellSize: 0.0143,
   isovalue: 2.05,
   maxBricks: 1536,
-  vertexBudget: 1_572_864,
+  vertexBudget: 3_145_728,
   refineMode: 2,
   normalDetail: 0.3,
   invertNormals: false,
@@ -209,15 +211,15 @@ export const defaultSampling = (): SamplingParams => ({
 
 export const defaultShading = (): ShadingParams => ({
   colorSource: 1,
-  paletteName: 'emerald',
-  gradientScale: 1.0,
-  gradientPhase: 0.0,
+  paletteName: 'amber',
+  gradientScale: 0.2,
+  gradientPhase: -0.2,
   ambient: 0.25,
   diffuse: 0.8,
   specular: 0.8,
   shininess: 40.0,
   lightPos: [0.5, 0.5, 2.0],
-  lightGlobal: false,
+  lightGlobal: true,
   rimStrength: 0.35,
   iridescence: 0.0,
   exposure: 1.15,
@@ -235,6 +237,7 @@ export const defaultVolume = (name: string): Volume => ({
   rotation: [0, 0, 0, 1],
   scale: [1, 1, 1],
   conformedNonce: 0,
+  autoConform: true,
 });
 
 /** Deep clone a volume with fresh ids (operators get new ids too). */
@@ -251,6 +254,7 @@ function cloneVolume(v: Volume, name: string): Volume {
     rotation: [...v.rotation] as Vec4,
     scale: [...v.scale] as Vec3,
     conformedNonce: v.conformedNonce,
+    autoConform: v.autoConform,
   };
 }
 
