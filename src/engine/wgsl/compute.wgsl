@@ -560,6 +560,30 @@ fn pool_at(base: u32, c: vec3u) -> f32 {
     return volume_pool[base + c.x + c.y * BRICK_CORNERS + c.z * BRICK_CORNERS2];
 }
 
+// Trilinear sample of the brick volume at a continuous corner coordinate.
+fn pool_lerp(base: u32, fp: vec3f) -> f32 {
+    let last = f32(BRICK_CORNERS - 1u);
+    let c = clamp(fp, vec3f(0.0), vec3f(last));
+    let i0 = vec3u(floor(c));
+    let i1 = min(i0 + vec3u(1u), vec3u(BRICK_CORNERS - 1u));
+    let f = c - vec3f(i0);
+    let c000 = pool_at(base, vec3u(i0.x, i0.y, i0.z));
+    let c100 = pool_at(base, vec3u(i1.x, i0.y, i0.z));
+    let c010 = pool_at(base, vec3u(i0.x, i1.y, i0.z));
+    let c110 = pool_at(base, vec3u(i1.x, i1.y, i0.z));
+    let c001 = pool_at(base, vec3u(i0.x, i0.y, i1.z));
+    let c101 = pool_at(base, vec3u(i1.x, i0.y, i1.z));
+    let c011 = pool_at(base, vec3u(i0.x, i1.y, i1.z));
+    let c111 = pool_at(base, vec3u(i1.x, i1.y, i1.z));
+    let x00 = mix(c000, c100, f.x);
+    let x10 = mix(c010, c110, f.x);
+    let x01 = mix(c001, c101, f.x);
+    let x11 = mix(c011, c111, f.x);
+    let y0 = mix(x00, x10, f.y);
+    let y1 = mix(x01, x11, f.y);
+    return mix(y0, y1, f.z);
+}
+
 @compute @workgroup_size(4, 4, 4)
 fn brick_mc(@builtin(global_invocation_id) gid: vec3u) {
     let brick_idx = gid.x / BRICK_CELLS;
@@ -638,14 +662,14 @@ fn brick_mc(@builtin(global_invocation_id) gid: vec3u) {
             let edge = u32(edges[k]);
             let p = vertList[edge];
 
-            // Central-difference normal from the brick volume, clamped to the
-            // brick interior (refinement recomputes true normals afterwards).
+            // Trilinear central-difference normal at the exact vertex (not the
+            // floored grid corner) so it's smooth, not blocky. Refinement
+            // recomputes the true-field normal afterwards when enabled; this
+            // also gives refinement a clean starting direction.
             let local_f = (p - lattice_pos(brick.grid_offset.xyz)) / cell_size;
-            let gc = vec3u(clamp(local_f, vec3f(1.0), vec3f(31.0)));
-
-            let nx = pool_at(base, vec3u(gc.x + 1u, gc.y, gc.z)) - pool_at(base, vec3u(gc.x - 1u, gc.y, gc.z));
-            let ny = pool_at(base, vec3u(gc.x, gc.y + 1u, gc.z)) - pool_at(base, vec3u(gc.x, gc.y - 1u, gc.z));
-            let nz = pool_at(base, vec3u(gc.x, gc.y, gc.z + 1u)) - pool_at(base, vec3u(gc.x, gc.y, gc.z - 1u));
+            let nx = pool_lerp(base, local_f + vec3f(1.0, 0.0, 0.0)) - pool_lerp(base, local_f - vec3f(1.0, 0.0, 0.0));
+            let ny = pool_lerp(base, local_f + vec3f(0.0, 1.0, 0.0)) - pool_lerp(base, local_f - vec3f(0.0, 1.0, 0.0));
+            let nz = pool_lerp(base, local_f + vec3f(0.0, 0.0, 1.0)) - pool_lerp(base, local_f - vec3f(0.0, 0.0, 1.0));
 
             // Outward is toward decreasing E (the extraction field already
             // encodes the solid/cavity side). bit0 flips normals for shading.

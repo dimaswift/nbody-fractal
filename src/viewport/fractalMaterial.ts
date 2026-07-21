@@ -94,8 +94,12 @@ void main() {
 
   vec3 baseColor = cosPalette(t);
 
-  // Key + fill + hemisphere + specular + rim
-  vec3 Ld = normalize(uLightPos - vWorldPos);
+  // Key + fill + hemisphere + specular + rim.
+  // Directional key light (light at infinity): its direction is constant over
+  // the whole surface, so specular depends only on N and the view. A near-field
+  // point light makes the light direction vary per point, which makes highlights
+  // crawl erratically as the camera orbits — the "specular looks wrong" effect.
+  vec3 Ld = normalize(uLightPos);
   vec3 H = normalize(Ld + V);
 
   float keyDiff = uDiffuse * max(dot(N, Ld), 0.0);
