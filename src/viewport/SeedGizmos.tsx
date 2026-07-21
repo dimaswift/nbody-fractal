@@ -95,8 +95,10 @@ export function SeedGizmos() {
   const seeds = useStore((s) => s.field.seeds);
   const selection = useStore((s) => s.selection);
   const show = useStore((s) => s.showSeeds);
+  const simplex = useStore((s) => s.field.fieldMode === 1);
 
-  if (!show) return null;
+  // Seed positions are unused in simplex mode — don't show misleading handles.
+  if (!show || simplex) return null;
 
   return (
     <>

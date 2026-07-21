@@ -7,8 +7,57 @@ export function SimulationPanel() {
   const field = useStore((s) => s.field);
   const setField = useStore((s) => s.setField);
 
+  const simplex = field.fieldMode === 1;
+
   return (
     <>
+      <Section title="Field source">
+        <Row label="Source">
+          <SelectField
+            value={field.fieldMode}
+            options={[
+              [0, 'Seeds (constellation)'],
+              [1, 'Simplex collapse'],
+            ]}
+            onChange={(v) => setField({ fieldMode: v })}
+          />
+        </Row>
+        {simplex && (
+          <>
+            <Slider
+              label="Vertices (N)"
+              value={field.simplexCount}
+              min={2}
+              max={32}
+              step={1}
+              onChange={(v) => setField({ simplexCount: Math.round(v) })}
+              format={(v) => String(Math.round(v))}
+            />
+            <Slider
+              label="Embed scale"
+              value={field.simplexScale}
+              min={0.01}
+              max={2}
+              step={0.01}
+              onChange={(v) => setField({ simplexScale: v })}
+            />
+            <Slider
+              label="Embed offset"
+              value={field.simplexOffset}
+              min={-1}
+              max={1}
+              step={0.01}
+              onChange={(v) => setField({ simplexOffset: v })}
+            />
+            <span className="hint">
+              Bodies are the vertices of a regular N-simplex in N-D (all mutually equidistant), collapsed
+              onto the diagonal — the same 1-D reduction that makes the seed fractal, at higher order.
+              Hand-placed seeds are ignored here; N sets the dimension.
+            </span>
+          </>
+        )}
+      </Section>
+
       <Section title="Simulation">
         <Slider
           label="Steps"

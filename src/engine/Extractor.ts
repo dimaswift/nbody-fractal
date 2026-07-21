@@ -17,6 +17,7 @@ import {
 import {
   BRICK_CELLS,
   FLOATS_PER_VERTEX,
+  MAX_SEEDS,
   type ExtractionCallbacks,
   type ExtractionHandle,
   type ExtractionRequest,
@@ -107,16 +108,26 @@ export class Extractor {
     engine.writeSeeds(field);
     engine.clearCounter();
 
+    // In simplex mode the body count is the simplex vertex count and the
+    // hand-placed seeds are unused (the simplex is canonical).
+    const bodyCount =
+      field.fieldMode === 1
+        ? Math.max(1, Math.min(field.simplexCount, MAX_SEEDS))
+        : Math.max(1, field.seeds.length);
     const spec = req.specialize
       ? {
-          bodyCount: Math.max(1, field.seeds.length),
+          bodyCount,
           steps: field.steps,
           interactionMode: field.interactionMode,
           metricMode: field.metricMode,
           warpType: field.warpType,
-          seeds: field.seeds.map((s) => ({ position: [...s.position], mass: s.mass })),
+          // Don't unroll seed constants in simplex mode — they aren't read.
+          seeds:
+            field.fieldMode === 1
+              ? undefined
+              : field.seeds.map((s) => ({ position: [...s.position], mass: s.mass })),
         }
-      : { bodyCount: Math.max(1, field.seeds.length) };
+      : { bodyCount };
     const pipes = await engine.getPipelines(spec);
     if (isCancelled()) return this.finish(cb, null, stats, t0, 'cancelled');
 

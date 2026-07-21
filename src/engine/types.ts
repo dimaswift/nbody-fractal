@@ -51,6 +51,11 @@ export interface FieldParams {
   metricMode: number; // 0 KE until escape | 1 KE full steps | 2 escape step count
   interactionMode: number; // 0 attract | 1 mass-scaled repel
   bodyInitMode: number; // 0 diagonal broadcast (legacy) | 1 vertex-oriented
+  // --- field source ---
+  fieldMode: number; // 0 hand-placed seeds | 1 regular-simplex collapse
+  simplexCount: number; // N simplex vertices = body count (simplex mode)
+  simplexScale: number; // embedding scale of the sample into simplex space
+  simplexOffset: number; // embedding baseline offset
   warpFactor: number;
   warpType: number; // 0 log | 1 asinh | 2 tanh
   temporalMode: number;

@@ -29,6 +29,8 @@ const SPEC_SEEDS = false;
 const seed_positions = array<vec4f, 1>(vec4f(0.0));
 const seed_masses = array<f32, 1>(0.0);
 
+const PI = 3.14159265359;
+
 // --- Brick geometry ---
 const BRICK_CELLS = 32u;            // cells per brick edge
 const BRICK_CORNERS = 33u;          // corner samples per edge (cells + 1)
@@ -81,7 +83,12 @@ struct Uniforms {
     operator_count: u32,    // 148
     wave_brick_count: u32,  // 152  bricks in the current dispatch wave
     body_init_mode: u32,    // 156  0 diagonal (legacy) | 1 vertex-oriented
-    operators: array<ShapeOperator, 8>, // 160 .. 800
+    // --- field source ---
+    field_mode: u32,        // 160  0 seeds | 1 regular-simplex collapse
+    simplex_count: u32,     // 164  N vertices of the simplex (== BODY_COUNT)
+    simplex_scale: f32,     // 168  embedding scale of the sample into simplex space
+    simplex_offset: f32,    // 172  embedding offset (baseline along each axis)
+    operators: array<ShapeOperator, 8>, // 176 .. 816
 };
 
 struct Seed {
@@ -174,33 +181,67 @@ fn EvaluateFractal(initial_pos: vec4f) -> f32 {
 
     var b: array<Body, BODY_COUNT>;
 
-    for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
-        var seed_pos: vec4f;
-        var seed_mass: f32;
-        if (SPEC_SEEDS) {
-            seed_pos = seed_positions[i];
-            seed_mass = seed_masses[i];
-        } else {
-            let seed = seeds[i];
-            seed_pos = seed.position;
-            seed_mass = seed.mass;
+    if (uniforms.field_mode == 1u) {
+        // --- Regular N-simplex collapse ---
+        // The seeds are the canonical regular simplex: the standard basis
+        // vectors e_1..e_N in R^N (every pair distance sqrt(2)). We never store
+        // them — for a sample embedded at q in R^N the distance to vertex e_i
+        // collapses to  d_i = sqrt(|q|^2 + 1 - 2 q_i).
+        // The 4D sample point is embedded into R^N by a discrete-cosine
+        // 4-frame (k = 1..4), each mode orthogonal to the all-ones diagonal
+        // and to the others — a symmetric slice through the simplex interior.
+        // Then, exactly as the legacy diagonal init, each body collapses onto
+        // the 4D main diagonal at val_i = density / exp(d_i).
+        let Nf = f32(BODY_COUNT);
+        var q: array<f32, BODY_COUNT>;
+        var q2 = 0.0;
+        for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
+            let fi = (f32(i) + 0.5) / Nf;
+            let e1 = cos(PI * fi);
+            let e2 = cos(2.0 * PI * fi);
+            let e3 = cos(3.0 * PI * fi);
+            let e4 = cos(4.0 * PI * fi);
+            let qi = uniforms.simplex_offset + uniforms.simplex_scale *
+                (position.x * e1 + position.y * e2 + position.z * e3 + position.w * e4);
+            q[i] = qi;
+            q2 = q2 + qi * qi;
         }
-        let d = length(position - seed_pos);
-        let val = uniforms.density / exp(d);
-        // `val` is the density falloff from the sample point to this seed —
-        // it MUST enter the initial position (that's the only way the field
-        // varies in space). Mode 0 broadcasts it onto the 4D main diagonal
-        // (the original scalar-broadcast behavior: every body at (q,q,q,q),
-        // so the constellation's orientation is discarded). Mode 1 instead
-        // places the body along its own seed's 4D direction, scaled by that
-        // same falloff — the vertices' geometry now drives the dynamics.
-        if (uniforms.body_init_mode == 1u) {
-            b[i].position = seed_pos * val;
-        } else {
+        for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
+            let d = sqrt(max(q2 + 1.0 - 2.0 * q[i], 0.0));
+            let val = uniforms.density / exp(d);
             b[i].position = vec4f(val);
+            b[i].velocity = vec4f(0.0);
+            b[i].mass = 1.0;
         }
-        b[i].velocity = vec4f(0.0);
-        b[i].mass = seed_mass;
+    } else {
+        for (var i = 0u; i < BODY_COUNT; i = i + 1u) {
+            var seed_pos: vec4f;
+            var seed_mass: f32;
+            if (SPEC_SEEDS) {
+                seed_pos = seed_positions[i];
+                seed_mass = seed_masses[i];
+            } else {
+                let seed = seeds[i];
+                seed_pos = seed.position;
+                seed_mass = seed.mass;
+            }
+            let d = length(position - seed_pos);
+            let val = uniforms.density / exp(d);
+            // `val` is the density falloff from the sample point to this seed —
+            // it MUST enter the initial position (that's the only way the field
+            // varies in space). Mode 0 broadcasts it onto the 4D main diagonal
+            // (the original scalar-broadcast behavior: every body at (q,q,q,q),
+            // so the constellation's orientation is discarded). Mode 1 instead
+            // places the body along its own seed's 4D direction, scaled by that
+            // same falloff — the vertices' geometry now drives the dynamics.
+            if (uniforms.body_init_mode == 1u) {
+                b[i].position = seed_pos * val;
+            } else {
+                b[i].position = vec4f(val);
+            }
+            b[i].velocity = vec4f(0.0);
+            b[i].mass = seed_mass;
+        }
     }
 
     if (BODY_COUNT > 0u) {

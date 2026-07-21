@@ -11,6 +11,9 @@
 
 import type { FieldParams, Vec3, Vec4 } from './types';
 
+// Mirrors MAX_SEEDS in types.ts — the GPU seed/body buffer capacity.
+const MAX_SIMPLEX = 32;
+
 export interface BodyPath {
   /** body 4D position at each recorded step (index 0 = initial) */
   points: Vec4[];
@@ -96,6 +99,35 @@ interface Body {
   mass: number;
 }
 
+/** Regular N-simplex collapse init — mirrors compute.wgsl's field_mode 1.
+ *  Vertices are the basis vectors e_i in R^N; the warped 4D sample is embedded
+ *  by a discrete-cosine 4-frame, then d_i = sqrt(|q|^2 + 1 - 2 q_i), collapsed
+ *  onto the 4D diagonal at val_i = density / exp(d_i). All masses = 1. */
+function simplexBodies(field: FieldParams, warped: Vec4): Body[] {
+  const N = Math.max(1, Math.min(field.simplexCount, MAX_SIMPLEX));
+  const q: number[] = new Array(N);
+  let q2 = 0;
+  for (let i = 0; i < N; i++) {
+    const fi = (i + 0.5) / N;
+    const e1 = Math.cos(Math.PI * fi);
+    const e2 = Math.cos(2 * Math.PI * fi);
+    const e3 = Math.cos(3 * Math.PI * fi);
+    const e4 = Math.cos(4 * Math.PI * fi);
+    const qi =
+      field.simplexOffset +
+      field.simplexScale * (warped[0] * e1 + warped[1] * e2 + warped[2] * e3 + warped[3] * e4);
+    q[i] = qi;
+    q2 += qi * qi;
+  }
+  const bodies: Body[] = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const d = Math.sqrt(Math.max(q2 + 1 - 2 * q[i], 0));
+    const val = field.density / Math.exp(d);
+    bodies[i] = { pos: [val, val, val, val], vel: [0, 0, 0, 0], mass: 1 };
+  }
+  return bodies;
+}
+
 function accelerations(bodies: Body[], soften: number, interactionMode: number): Vec4[] {
   const n = bodies.length;
   const a: Vec4[] = bodies.map(() => [0, 0, 0, 0]);
@@ -133,19 +165,22 @@ export function integrateTrajectory(
   const sample4 = probeToSample(field, pos3);
   const warped = applyWarp(field, sample4);
 
-  const bodies: Body[] = field.seeds.map((seed) => {
-    const dx = warped[0] - seed.position[0];
-    const dy = warped[1] - seed.position[1];
-    const dz = warped[2] - seed.position[2];
-    const dw = warped[3] - seed.position[3];
-    const d = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
-    const val = field.density / Math.exp(d);
-    const pos: Vec4 =
-      field.bodyInitMode === 1
-        ? [seed.position[0] * val, seed.position[1] * val, seed.position[2] * val, seed.position[3] * val]
-        : [val, val, val, val];
-    return { pos, vel: [0, 0, 0, 0], mass: seed.mass };
-  });
+  const bodies: Body[] =
+    field.fieldMode === 1
+      ? simplexBodies(field, warped)
+      : field.seeds.map((seed) => {
+          const dx = warped[0] - seed.position[0];
+          const dy = warped[1] - seed.position[1];
+          const dz = warped[2] - seed.position[2];
+          const dw = warped[3] - seed.position[3];
+          const d = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+          const val = field.density / Math.exp(d);
+          const pos: Vec4 =
+            field.bodyInitMode === 1
+              ? [seed.position[0] * val, seed.position[1] * val, seed.position[2] * val, seed.position[3] * val]
+              : [val, val, val, val];
+          return { pos, vel: [0, 0, 0, 0], mass: seed.mass };
+        });
   if (bodies.length > 0) {
     bodies[0].vel = [field.coreVelocity[0], field.coreVelocity[1], field.coreVelocity[2], field.coreVelocity[3]];
   }
